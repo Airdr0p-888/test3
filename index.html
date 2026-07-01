@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GOLDLAUNCH 发射台</title>
-    <link rel="stylesheet" href="./styles.css?v=20260701-feature-layout-fix" />
-    <script type="module" src="./app.js?v=20260701-feature-layout-fix"></script>
+    <link rel="stylesheet" href="./styles.css?v=20260701-time-limit" />
+    <script type="module" src="./app.js?v=20260701-time-limit"></script>
   </head>
   <body>
     <div class="shell">
@@ -150,6 +150,13 @@
                 <label>单钱包累计限购代币数<input name="maxBuyAmountPerWallet" type="number" value="0" min="0" step="1" /></label>
                 <label>金额限购<select name="buyAmountLimitEnabled"><option value="false">关闭</option><option value="true">开启</option></select></label>
                 <label>单钱包累计限购金额（BNB/USDT）<input name="maxBuyBaseAmountPerWallet" type="number" value="0.1" min="0" step="0.000000000000000001" /></label>
+                <label>时间金额限购<select name="timedBuyLimitEnabled"><option value="false">关闭</option><option value="true">开启</option></select></label>
+                <label>第 1 档：结束分钟<input name="timedBuyLimitMinute1" type="number" value="3" min="0" step="1" /></label>
+                <label>第 1 档：金额上限（BNB/USDT）<input name="timedBuyLimitAmount1" type="number" value="5" min="0" step="0.000000000000000001" /></label>
+                <label>第 2 档：结束分钟<input name="timedBuyLimitMinute2" type="number" value="6" min="0" step="1" /></label>
+                <label>第 2 档：金额上限（BNB/USDT）<input name="timedBuyLimitAmount2" type="number" value="10" min="0" step="0.000000000000000001" /></label>
+                <label>第 3 档：结束分钟<input name="timedBuyLimitMinute3" type="number" value="10" min="0" step="1" /></label>
+                <label>第 3 档：金额上限（BNB/USDT）<input name="timedBuyLimitAmount3" type="number" value="20" min="0" step="0.000000000000000001" /></label>
                 <label>买入白名单<select name="buyWhitelistEnabled"><option value="false">关闭</option><option value="true">开启</option></select></label>
                 <label>开盘前买入白名单<select name="preLaunchBuyWhitelistEnabled"><option value="false">关闭</option><option value="true">开启</option></select></label>
               </div>
@@ -267,6 +274,10 @@
               <div class="row"><input id="maxBuyAmountPerWallet" placeholder="单钱包累计限购代币数" /><button data-action="setMaxBuyAmountPerWallet">设置数量</button></div>
               <div class="row"><select id="buyAmountLimitEnabled"><option value="true">开启金额限购</option><option value="false">关闭金额限购</option></select><button data-action="setBuyAmountLimitEnabled">保存</button></div>
               <div class="row"><input id="maxBuyBaseAmountPerWallet" placeholder="累计金额上限，如 0.1" /><button data-action="setMaxBuyBaseAmountPerWallet">设置金额</button></div>
+              <div class="row"><select id="timedBuyLimitEnabled"><option value="true">开启时间金额限购</option><option value="false">关闭时间金额限购</option></select><button data-action="setTimedBuyLimitEnabled">保存</button></div>
+              <div class="row three"><input id="timedBuyLimitMinute1" placeholder="第1档分钟" /><input id="timedBuyLimitAmount1" placeholder="第1档金额" /><button data-action="setTimedBuyLimitTier1">保存第1档</button></div>
+              <div class="row three"><input id="timedBuyLimitMinute2" placeholder="第2档分钟" /><input id="timedBuyLimitAmount2" placeholder="第2档金额" /><button data-action="setTimedBuyLimitTier2">保存第2档</button></div>
+              <div class="row three"><input id="timedBuyLimitMinute3" placeholder="第3档分钟" /><input id="timedBuyLimitAmount3" placeholder="第3档金额" /><button data-action="setTimedBuyLimitTier3">保存第3档</button></div>
             </article>
 
             <article data-template-feature="dividend lpDividend tax">

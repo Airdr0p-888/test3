@@ -418,6 +418,9 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     mapping(address => uint256) public boughtBaseAmount;
     bool public buyAmountLimitEnabled;
     uint256 public maxBuyBaseAmountPerWallet;
+    bool public timedBuyLimitEnabled;
+    uint256[3] public timedBuyLimitMinutes;
+    uint256[3] public timedBuyLimitAmounts;
     bool public buyWhitelistEnabled;
     mapping(address => bool) public buyWhitelist;
     bool public preLaunchBuyWhitelistEnabled;
@@ -468,7 +471,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     event DividendClaimed(address indexed user, uint256 tokenReward, uint256 lpReward);
     event AutoDividendProcessed(uint256 processed, uint256 paid);
     modifier lockSwap() { inSwap = true; _; inSwap = false; }
-    constructor(string memory name_, string memory symbol_, uint256 totalSupply_, MintMode mintMode_, address usdtAddress_, address router_, uint256 mintPrice_, uint256 tokenPerMint_, uint256 maxMintCount_, UserMintMode userMintMode_, uint256 userMintShare_, uint256 userMintAmount_, uint256 lpFundShare_, LaunchMode launchMode_, uint256 launchTime_, bool mintFeatureEnabled_, address marketingWallet_, address owner_, address rewardToken_, uint8 dividendTargetMode_, uint256 buyTax_, uint256 sellTax_, uint256 transferTax_, uint256 marketingShare_, uint256 burnShare_, uint256 lpShare_, uint256 dividendShare_, bool buyLimitEnabled_, uint256 maxBuyAmountPerWallet_, uint256 minTokenDividendBalance_, bool buyAmountLimitEnabled_, uint256 maxBuyBaseAmountPerWallet_, bool buyWhitelistEnabled_, bool preLaunchBuyWhitelistEnabled_) ERC20(name_, symbol_) Ownable(owner_) {
+    constructor(string memory name_, string memory symbol_, uint256 totalSupply_, MintMode mintMode_, address usdtAddress_, address router_, uint256 mintPrice_, uint256 tokenPerMint_, uint256 maxMintCount_, UserMintMode userMintMode_, uint256 userMintShare_, uint256 userMintAmount_, uint256 lpFundShare_, LaunchMode launchMode_, uint256 launchTime_, bool mintFeatureEnabled_, address marketingWallet_, address owner_, address rewardToken_, uint8 dividendTargetMode_, uint256 buyTax_, uint256 sellTax_, uint256 transferTax_, uint256 marketingShare_, uint256 burnShare_, uint256 lpShare_, uint256 dividendShare_, bool buyLimitEnabled_, uint256 maxBuyAmountPerWallet_, uint256 minTokenDividendBalance_, bool buyAmountLimitEnabled_, uint256 maxBuyBaseAmountPerWallet_, bool timedBuyLimitEnabled_, uint256[3] memory timedBuyLimitMinutes_, uint256[3] memory timedBuyLimitAmounts_, bool buyWhitelistEnabled_, bool preLaunchBuyWhitelistEnabled_) ERC20(name_, symbol_) Ownable(owner_) {
         require(totalSupply_ > 0, "totalSupply zero");
         require(router_ != address(0), "router zero");
         require(marketingWallet_ != address(0), "marketing zero");
@@ -480,8 +483,10 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         require(sellTax_ <= MAX_SELL_TAX, "sell tax > 100%");
         require(marketingShare_ + burnShare_ + lpShare_ + dividendShare_ == DENOMINATOR, "sum != 10000");
         require(!(buyLimitEnabled_ && buyAmountLimitEnabled_), "choose one limit");
+        require(!(buyAmountLimitEnabled_ && timedBuyLimitEnabled_), "choose one amount limit");
         if (buyLimitEnabled_) require(maxBuyAmountPerWallet_ > 0, "buy limit zero");
         if (buyAmountLimitEnabled_) require(maxBuyBaseAmountPerWallet_ > 0, "buy amount limit zero");
+        if (timedBuyLimitEnabled_) require(timedBuyLimitAmounts_[0] > 0, "timed limit zero");
         if (mintMode_ == MintMode.USDT) require(usdtAddress_ != address(0), "usdt zero");
         require(rewardToken_ != address(this), "bad reward token");
         if (launchMode_ == LaunchMode.TIME) require(launchTime_ > block.timestamp, "bad launch time");
@@ -565,7 +570,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function _update(address from, address to, uint256 amount) internal override {
         if (from == address(0) || to == address(0)) { _updateExcludedTokenBalance(from, to, amount); super._update(from, to, amount); return; }
         uint256 grossAmount = amount;
-        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; emit TradingOpened(block.timestamp); }
+        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; tradingStartTime = block.timestamp; emit TradingOpened(block.timestamp); }
         bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
         bool preLaunchBuy = !tradingOpen && from == pair && preLaunchBuyWhitelistEnabled && preLaunchBuyWhitelist[to];
         if (!tradingOpen && !exemptLimit && !preLaunchBuy) revert("trading not open");
@@ -585,6 +590,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         if (from == pair && buyWhitelistEnabled && !preLaunchBuy) require(buyWhitelist[to], "buy whitelist");
         if (buyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtAmount[to] += amount; require(boughtAmount[to] <= maxBuyAmountPerWallet, "buy limit"); }
         if (buyAmountLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= maxBuyBaseAmountPerWallet, "buy amount limit"); }
+        if (timedBuyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { uint256 timedLimit = _currentTimedBuyLimit(); if (timedLimit > 0) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= timedLimit, "time buy limit"); } }
         if (_useExternalDistributor()) {
             _externalSyncBefore(from); _externalSyncBefore(to);
             super._update(from, to, amount);
@@ -608,7 +614,18 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         require(tokenAmountOut > 0 && tokenAmountOut < reserveOut, "bad buy amount");
         return reserveIn * tokenAmountOut * 10000 / ((reserveOut - tokenAmountOut) * 9975) + 1;
     }
-    function _openTrading() internal { if (!tradingOpen) { tradingOpen = true; mintEnabled = false; emit TradingOpened(block.timestamp); } }
+    function _currentTimedBuyLimit() internal view returns (uint256) {
+        if (!timedBuyLimitEnabled || !tradingOpen || tradingStartTime == 0 || block.timestamp < tradingStartTime) return 0;
+        uint256 elapsedMinutes = (block.timestamp - tradingStartTime) / 60;
+        for (uint256 i; i < 3; i++) {
+            uint256 endMinute = timedBuyLimitMinutes[i];
+            uint256 limitAmount = timedBuyLimitAmounts[i];
+            if (limitAmount == 0) continue;
+            if (endMinute == 0 || elapsedMinutes < endMinute) return limitAmount;
+        }
+        return 0;
+    }
+    function _openTrading() internal { if (!tradingOpen) { tradingOpen = true; tradingStartTime = block.timestamp; mintEnabled = false; emit TradingOpened(block.timestamp); } }
     function openTrading() external onlyOwner { _openTrading(); }
     function closeMint() external onlyOwner { mintEnabled = false; }
     function _swapBack(uint256 tokenAmount) internal lockSwap {
@@ -766,10 +783,12 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function setWhitelist(address user, bool v) external onlyOwner { whitelist[user] = v; }
     function batchSetWhitelist(address[] calldata users, bool v) external onlyOwner { for (uint i; i < users.length; i++) whitelist[users[i]] = v; }
     function setExcludedFromFee(address user, bool v) external onlyOwner { require(!feeExemptionsLocked, "fee exemptions locked"); isExcludedFromFee[user] = v; }
-    function setBuyLimitEnabled(bool v) external onlyOwner { if (v) { require(maxBuyAmountPerWallet > 0, "buy limit zero"); buyAmountLimitEnabled = false; } buyLimitEnabled = v; }
+    function setBuyLimitEnabled(bool v) external onlyOwner { if (v) { require(maxBuyAmountPerWallet > 0, "buy limit zero"); buyAmountLimitEnabled = false; timedBuyLimitEnabled = false; } buyLimitEnabled = v; }
     function setMaxBuyAmountPerWallet(uint256 v) external onlyOwner { maxBuyAmountPerWallet = v; }
-    function setBuyAmountLimitEnabled(bool v) external onlyOwner { if (v) { require(maxBuyBaseAmountPerWallet > 0, "buy amount limit zero"); buyLimitEnabled = false; } buyAmountLimitEnabled = v; }
+    function setBuyAmountLimitEnabled(bool v) external onlyOwner { if (v) { require(maxBuyBaseAmountPerWallet > 0, "buy amount limit zero"); buyLimitEnabled = false; timedBuyLimitEnabled = false; } buyAmountLimitEnabled = v; }
     function setMaxBuyBaseAmountPerWallet(uint256 v) external onlyOwner { maxBuyBaseAmountPerWallet = v; }
+    function setTimedBuyLimitEnabled(bool v) external onlyOwner { if (v) { require(timedBuyLimitAmounts[0] > 0, "timed limit zero"); buyLimitEnabled = false; buyAmountLimitEnabled = false; } timedBuyLimitEnabled = v; }
+    function setTimedBuyLimitTier(uint256 index, uint256 endMinute, uint256 amount) external onlyOwner { require(index < 3, "bad tier"); if (index > 0 && timedBuyLimitMinutes[index - 1] > 0 && endMinute > 0) require(endMinute > timedBuyLimitMinutes[index - 1], "bad minute"); if (index < 2 && timedBuyLimitMinutes[index + 1] > 0 && endMinute > 0) require(endMinute < timedBuyLimitMinutes[index + 1], "bad minute"); timedBuyLimitMinutes[index] = endMinute; timedBuyLimitAmounts[index] = amount; }
     function setBuyWhitelistEnabled(bool v) external onlyOwner { buyWhitelistEnabled = v; }
     function setBuyWhitelist(address user, bool v) external onlyOwner { require(user != address(0), "zero address"); buyWhitelist[user] = v; }
     function batchSetBuyWhitelist(address[] calldata users, bool v) external onlyOwner { for (uint i; i < users.length; i++) { require(users[i] != address(0), "zero address"); buyWhitelist[users[i]] = v; } }
@@ -944,6 +963,9 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     uint256 public maxBuyAmountPerWallet;
     bool public buyAmountLimitEnabled;
     uint256 public maxBuyBaseAmountPerWallet;
+    bool public timedBuyLimitEnabled;
+    uint256[3] public timedBuyLimitMinutes;
+    uint256[3] public timedBuyLimitAmounts;
     mapping(address => uint256) public boughtAmount;
     mapping(address => uint256) public boughtBaseAmount;
     bool public buyWhitelistEnabled;
@@ -995,6 +1017,9 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         uint256 minTokenDividendBalance_,
         bool buyAmountLimitEnabled_,
         uint256 maxBuyBaseAmountPerWallet_,
+        bool timedBuyLimitEnabled_,
+        uint256[3] memory timedBuyLimitMinutes_,
+        uint256[3] memory timedBuyLimitAmounts_,
         bool buyWhitelistEnabled_,
         bool preLaunchBuyWhitelistEnabled_
     ) ERC20(name_, symbol_) Ownable(owner_) {
@@ -1037,12 +1062,16 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         burnShare = burnShare_;
         lpShare = lpShare_;
         dividendShare = dividendShare_;
-        if (buyLimitEnabled_) buyAmountLimitEnabled_ = false;
-        if (buyAmountLimitEnabled_) buyLimitEnabled_ = false;
+        if (buyLimitEnabled_) { buyAmountLimitEnabled_ = false; timedBuyLimitEnabled_ = false; }
+        if (buyAmountLimitEnabled_) { buyLimitEnabled_ = false; timedBuyLimitEnabled_ = false; }
+        if (timedBuyLimitEnabled_) { buyLimitEnabled_ = false; buyAmountLimitEnabled_ = false; }
         buyLimitEnabled = buyLimitEnabled_;
         maxBuyAmountPerWallet = maxBuyAmountPerWallet_;
         buyAmountLimitEnabled = buyAmountLimitEnabled_;
         maxBuyBaseAmountPerWallet = maxBuyBaseAmountPerWallet_;
+        timedBuyLimitEnabled = timedBuyLimitEnabled_;
+        timedBuyLimitMinutes = timedBuyLimitMinutes_;
+        timedBuyLimitAmounts = timedBuyLimitAmounts_;
         buyWhitelistEnabled = buyWhitelistEnabled_;
         preLaunchBuyWhitelistEnabled = preLaunchBuyWhitelistEnabled_;
         minTokenDividendBalance = minTokenDividendBalance_;
@@ -1130,7 +1159,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function _update(address from, address to, uint256 amount) internal override {
         if (from == address(0) || to == address(0)) { super._update(from, to, amount); return; }
         uint256 grossAmount = amount;
-        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; emit TradingOpened(block.timestamp); }
+        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; tradingStartTime = block.timestamp; emit TradingOpened(block.timestamp); }
         bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
         bool preLaunchBuy = !tradingOpen && from == pair && preLaunchBuyWhitelistEnabled && preLaunchBuyWhitelist[to];
         if (!tradingOpen && !exemptLimit && !preLaunchBuy) revert("trading not open");
@@ -1154,6 +1183,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         if (from == pair && buyWhitelistEnabled && !preLaunchBuy) require(buyWhitelist[to], "buy whitelist");
         if (buyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtAmount[to] += amount; require(boughtAmount[to] <= maxBuyAmountPerWallet, "buy limit"); }
         if (buyAmountLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= maxBuyBaseAmountPerWallet, "buy amount limit"); }
+        if (timedBuyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { uint256 timedLimit = _currentTimedBuyLimit(); if (timedLimit > 0) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= timedLimit, "time buy limit"); } }
         super._update(from, to, amount);
     }
 
@@ -1165,6 +1195,17 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         uint256 reserveIn = tokenIs0 ? uint256(reserve1) : uint256(reserve0);
         require(tokenAmountOut > 0 && tokenAmountOut < reserveOut, "bad buy amount");
         return reserveIn * tokenAmountOut * 10000 / ((reserveOut - tokenAmountOut) * 9975) + 1;
+    }
+    function _currentTimedBuyLimit() internal view returns (uint256) {
+        if (!timedBuyLimitEnabled || !tradingOpen || tradingStartTime == 0 || block.timestamp < tradingStartTime) return 0;
+        uint256 elapsedMinutes = (block.timestamp - tradingStartTime) / 60;
+        for (uint256 i; i < 3; i++) {
+            uint256 endMinute = timedBuyLimitMinutes[i];
+            uint256 limitAmount = timedBuyLimitAmounts[i];
+            if (limitAmount == 0) continue;
+            if (endMinute == 0 || elapsedMinutes < endMinute) return limitAmount;
+        }
+        return 0;
     }
 
     function _baseBalance() internal view returns (uint256) { return mintMode == MintMode.BNB ? address(this).balance : IERC20(usdtAddress).balanceOf(address(this)); }
@@ -1230,7 +1271,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         }
     }
 
-    function _openTrading() internal { if (!tradingOpen) { tradingOpen = true; mintEnabled = false; emit TradingOpened(block.timestamp); } }
+    function _openTrading() internal { if (!tradingOpen) { tradingOpen = true; tradingStartTime = block.timestamp; mintEnabled = false; emit TradingOpened(block.timestamp); } }
     function openTrading() external onlyOwner { _openTrading(); }
     function closeMint() external onlyOwner { mintEnabled = false; }
     function setMintPrice(uint256 v) external onlyOwner { mintPrice = v; }
@@ -1241,10 +1282,12 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function setWhitelist(address user, bool v) external onlyOwner { whitelist[user] = v; }
     function batchSetWhitelist(address[] calldata users, bool v) external onlyOwner { for (uint256 i; i < users.length; i++) whitelist[users[i]] = v; }
     function setExcludedFromFee(address user, bool v) external onlyOwner { require(!feeExemptionsLocked, "fee exemptions locked"); isExcludedFromFee[user] = v; }
-    function setBuyLimitEnabled(bool v) external onlyOwner { if (v) buyAmountLimitEnabled = false; buyLimitEnabled = v; }
+    function setBuyLimitEnabled(bool v) external onlyOwner { if (v) { buyAmountLimitEnabled = false; timedBuyLimitEnabled = false; } buyLimitEnabled = v; }
     function setMaxBuyAmountPerWallet(uint256 v) external onlyOwner { maxBuyAmountPerWallet = v; }
-    function setBuyAmountLimitEnabled(bool v) external onlyOwner { if (v) buyLimitEnabled = false; buyAmountLimitEnabled = v; }
+    function setBuyAmountLimitEnabled(bool v) external onlyOwner { if (v) { buyLimitEnabled = false; timedBuyLimitEnabled = false; } buyAmountLimitEnabled = v; }
     function setMaxBuyBaseAmountPerWallet(uint256 v) external onlyOwner { maxBuyBaseAmountPerWallet = v; }
+    function setTimedBuyLimitEnabled(bool v) external onlyOwner { if (v) { buyLimitEnabled = false; buyAmountLimitEnabled = false; } timedBuyLimitEnabled = v; }
+    function setTimedBuyLimitTier(uint256 index, uint256 endMinute, uint256 amount) external onlyOwner { require(index < 3, "bad tier"); timedBuyLimitMinutes[index] = endMinute; timedBuyLimitAmounts[index] = amount; }
     function setBuyWhitelistEnabled(bool v) external onlyOwner { buyWhitelistEnabled = v; }
     function setBuyWhitelist(address user, bool v) external onlyOwner { require(user != address(0), "zero address"); buyWhitelist[user] = v; }
     function batchSetBuyWhitelist(address[] calldata users, bool v) external onlyOwner { for (uint256 i; i < users.length; i++) { require(users[i] != address(0), "zero address"); buyWhitelist[users[i]] = v; } }
@@ -1352,6 +1395,9 @@ const ADMIN_TOKEN_ABI = [
   "function dividendHolderCount() view returns (uint256)",
   "function buyAmountLimitEnabled() view returns (bool)",
   "function maxBuyBaseAmountPerWallet() view returns (uint256)",
+  "function timedBuyLimitEnabled() view returns (bool)",
+  "function timedBuyLimitMinutes(uint256) view returns (uint256)",
+  "function timedBuyLimitAmounts(uint256) view returns (uint256)",
   "function buyWhitelistEnabled() view returns (bool)",
   "function preLaunchBuyWhitelistEnabled() view returns (bool)",
   "function dividendExcludedCount() view returns (uint256)",
@@ -1398,6 +1444,8 @@ const ADMIN_TOKEN_ABI = [
   "function setMaxBuyAmountPerWallet(uint256)",
   "function setBuyAmountLimitEnabled(bool)",
   "function setMaxBuyBaseAmountPerWallet(uint256)",
+  "function setTimedBuyLimitEnabled(bool)",
+  "function setTimedBuyLimitTier(uint256,uint256,uint256)",
   "function processPendingDividends()",
   "function forceSwapBack()",
   "function forceAddLiquidity(uint256,uint256)",
@@ -1973,7 +2021,7 @@ const LITE_MINT_DISABLED_BLOCK = String.raw`    receive() external payable { rev
 const LITE_TAX_BLOCK = String.raw`    function _update(address from, address to, uint256 amount) internal override {
         if (from == address(0) || to == address(0)) { super._update(from, to, amount); return; }
         uint256 grossAmount = amount;
-        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; emit TradingOpened(block.timestamp); }
+        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; tradingStartTime = block.timestamp; emit TradingOpened(block.timestamp); }
         bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
         bool preLaunchBuy = !tradingOpen && from == pair && preLaunchBuyWhitelistEnabled && preLaunchBuyWhitelist[to];
         if (!tradingOpen && !exemptLimit && !preLaunchBuy) revert("trading not open");
@@ -1997,6 +2045,7 @@ const LITE_TAX_BLOCK = String.raw`    function _update(address from, address to,
         if (from == pair && buyWhitelistEnabled && !preLaunchBuy) require(buyWhitelist[to], "buy whitelist");
         if (buyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtAmount[to] += amount; require(boughtAmount[to] <= maxBuyAmountPerWallet, "buy limit"); }
         if (buyAmountLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= maxBuyBaseAmountPerWallet, "buy amount limit"); }
+        if (timedBuyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { uint256 timedLimit = _currentTimedBuyLimit(); if (timedLimit > 0) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= timedLimit, "time buy limit"); } }
         super._update(from, to, amount);
     }
 
@@ -2008,6 +2057,17 @@ const LITE_TAX_BLOCK = String.raw`    function _update(address from, address to,
         uint256 reserveIn = tokenIs0 ? uint256(reserve1) : uint256(reserve0);
         require(tokenAmountOut > 0 && tokenAmountOut < reserveOut, "bad buy amount");
         return reserveIn * tokenAmountOut * 10000 / ((reserveOut - tokenAmountOut) * 9975) + 1;
+    }
+    function _currentTimedBuyLimit() internal view returns (uint256) {
+        if (!timedBuyLimitEnabled || !tradingOpen || tradingStartTime == 0 || block.timestamp < tradingStartTime) return 0;
+        uint256 elapsedMinutes = (block.timestamp - tradingStartTime) / 60;
+        for (uint256 i; i < 3; i++) {
+            uint256 endMinute = timedBuyLimitMinutes[i];
+            uint256 limitAmount = timedBuyLimitAmounts[i];
+            if (limitAmount == 0) continue;
+            if (endMinute == 0 || elapsedMinutes < endMinute) return limitAmount;
+        }
+        return 0;
     }
 
     function _baseBalance() internal view returns (uint256) { return mintMode == MintMode.BNB ? address(this).balance : IERC20(usdtAddress).balanceOf(address(this)); }
@@ -2067,6 +2127,7 @@ const LITE_TAX_DISABLED_BLOCK = String.raw`    function _update(address from, ad
         uint256 grossAmount = amount;
         if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) {
             tradingOpen = true;
+            tradingStartTime = block.timestamp;
             emit TradingOpened(block.timestamp);
         }
         bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
@@ -2075,6 +2136,7 @@ const LITE_TAX_DISABLED_BLOCK = String.raw`    function _update(address from, ad
         if (from == pair && buyWhitelistEnabled && !preLaunchBuy) require(buyWhitelist[to], "buy whitelist");
         if (buyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtAmount[to] += amount; require(boughtAmount[to] <= maxBuyAmountPerWallet, "buy limit"); }
         if (buyAmountLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= maxBuyBaseAmountPerWallet, "buy amount limit"); }
+        if (timedBuyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { uint256 timedLimit = _currentTimedBuyLimit(); if (timedLimit > 0) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= timedLimit, "time buy limit"); } }
         super._update(from, to, amount);
     }
 
@@ -2086,6 +2148,17 @@ const LITE_TAX_DISABLED_BLOCK = String.raw`    function _update(address from, ad
         uint256 reserveIn = tokenIs0 ? uint256(reserve1) : uint256(reserve0);
         require(tokenAmountOut > 0 && tokenAmountOut < reserveOut, "bad buy amount");
         return reserveIn * tokenAmountOut * 10000 / ((reserveOut - tokenAmountOut) * 9975) + 1;
+    }
+    function _currentTimedBuyLimit() internal view returns (uint256) {
+        if (!timedBuyLimitEnabled || !tradingOpen || tradingStartTime == 0 || block.timestamp < tradingStartTime) return 0;
+        uint256 elapsedMinutes = (block.timestamp - tradingStartTime) / 60;
+        for (uint256 i; i < 3; i++) {
+            uint256 endMinute = timedBuyLimitMinutes[i];
+            uint256 limitAmount = timedBuyLimitAmounts[i];
+            if (limitAmount == 0) continue;
+            if (endMinute == 0 || elapsedMinutes < endMinute) return limitAmount;
+        }
+        return 0;
     }
 
     function _baseBalance() internal view returns (uint256) { return mintMode == MintMode.BNB ? address(this).balance : IERC20(usdtAddress).balanceOf(address(this)); }
@@ -2534,7 +2607,7 @@ const EXTERNAL_DIVIDEND_MINT_DISABLED_BLOCK = String.raw`    receive() external 
 const EXTERNAL_DIVIDEND_TAX_BLOCK = String.raw`    function _update(address from, address to, uint256 amount) internal override {
         if (from == address(0) || to == address(0)) { super._update(from, to, amount); return; }
         uint256 grossAmount = amount;
-        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; emit TradingOpened(block.timestamp); }
+        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; tradingStartTime = block.timestamp; emit TradingOpened(block.timestamp); }
         bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
         bool preLaunchBuy = !tradingOpen && from == pair && preLaunchBuyWhitelistEnabled && preLaunchBuyWhitelist[to];
         if (!tradingOpen && !exemptLimit && !preLaunchBuy) revert("trading not open");
@@ -2688,6 +2761,7 @@ const EXTERNAL_DIVIDEND_TAX_DISABLED_BLOCK = String.raw`    function _update(add
         uint256 grossAmount = amount;
         if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) {
             tradingOpen = true;
+            tradingStartTime = block.timestamp;
             emit TradingOpened(block.timestamp);
         }
         bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
@@ -2696,6 +2770,7 @@ const EXTERNAL_DIVIDEND_TAX_DISABLED_BLOCK = String.raw`    function _update(add
         if (from == pair && buyWhitelistEnabled && !preLaunchBuy) require(buyWhitelist[to], "buy whitelist");
         if (buyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtAmount[to] += amount; require(boughtAmount[to] <= maxBuyAmountPerWallet, "buy limit"); }
         if (buyAmountLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= maxBuyBaseAmountPerWallet, "buy amount limit"); }
+        if (timedBuyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { uint256 timedLimit = _currentTimedBuyLimit(); if (timedLimit > 0) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= timedLimit, "time buy limit"); } }
         _externalSyncBefore(from);
         _externalSyncBefore(to);
         super._update(from, to, amount);
@@ -2712,6 +2787,17 @@ const EXTERNAL_DIVIDEND_TAX_DISABLED_BLOCK = String.raw`    function _update(add
         uint256 reserveIn = tokenIs0 ? uint256(reserve1) : uint256(reserve0);
         require(tokenAmountOut > 0 && tokenAmountOut < reserveOut, "bad buy amount");
         return reserveIn * tokenAmountOut * 10000 / ((reserveOut - tokenAmountOut) * 9975) + 1;
+    }
+    function _currentTimedBuyLimit() internal view returns (uint256) {
+        if (!timedBuyLimitEnabled || !tradingOpen || tradingStartTime == 0 || block.timestamp < tradingStartTime) return 0;
+        uint256 elapsedMinutes = (block.timestamp - tradingStartTime) / 60;
+        for (uint256 i; i < 3; i++) {
+            uint256 endMinute = timedBuyLimitMinutes[i];
+            uint256 limitAmount = timedBuyLimitAmounts[i];
+            if (limitAmount == 0) continue;
+            if (endMinute == 0 || elapsedMinutes < endMinute) return limitAmount;
+        }
+        return 0;
     }
 
     function _baseBalance() internal view returns (uint256) { return mintMode == MintMode.BNB ? address(this).balance : IERC20(usdtAddress).balanceOf(address(this)); }
@@ -2864,29 +2950,51 @@ function syncDeployLimitModeUI(preferredMode = "") {
   const tokenLimitInput = formField("maxBuyAmountPerWallet");
   const amountLimitToggle = formField("buyAmountLimitEnabled");
   const amountLimitInput = formField("maxBuyBaseAmountPerWallet");
-  if (!tokenLimitToggle || !amountLimitToggle) return;
+  const timedLimitToggle = formField("timedBuyLimitEnabled");
+  const timedInputs = [
+    formField("timedBuyLimitMinute1"),
+    formField("timedBuyLimitAmount1"),
+    formField("timedBuyLimitMinute2"),
+    formField("timedBuyLimitAmount2"),
+    formField("timedBuyLimitMinute3"),
+    formField("timedBuyLimitAmount3")
+  ];
+  if (!tokenLimitToggle || !amountLimitToggle || !timedLimitToggle) return;
 
   const tokenEnabled = parseBool(tokenLimitToggle.value);
   const amountEnabled = parseBool(amountLimitToggle.value);
+  const timedEnabled = parseBool(timedLimitToggle.value);
 
-  if (tokenEnabled && amountEnabled) {
-    if (preferredMode === "amount") tokenLimitToggle.value = "false";
-    else amountLimitToggle.value = "false";
+  if ((tokenEnabled ? 1 : 0) + (amountEnabled ? 1 : 0) + (timedEnabled ? 1 : 0) > 1) {
+    if (preferredMode === "amount") {
+      tokenLimitToggle.value = "false";
+      timedLimitToggle.value = "false";
+    } else if (preferredMode === "timed") {
+      tokenLimitToggle.value = "false";
+      amountLimitToggle.value = "false";
+    } else {
+      amountLimitToggle.value = "false";
+      timedLimitToggle.value = "false";
+    }
   }
 
   const finalTokenEnabled = parseBool(tokenLimitToggle.value);
   const finalAmountEnabled = parseBool(amountLimitToggle.value);
+  const finalTimedEnabled = parseBool(timedLimitToggle.value);
 
   if (tokenLimitInput) tokenLimitInput.disabled = !finalTokenEnabled;
   if (amountLimitInput) amountLimitInput.disabled = !finalAmountEnabled;
+  timedInputs.forEach((input) => { if (input) input.disabled = !finalTimedEnabled; });
 
   const hint = ensureHintNode("deployLimitModeHint", "#limitsSection");
   if (hint) {
     hint.textContent = finalTokenEnabled
-      ? "当前使用代币数量限购，金额限购已关闭。"
+      ? "当前使用代币数量限购。"
       : finalAmountEnabled
-        ? "当前使用金额限购，代币数量限购已关闭。"
-        : "买入限购和金额限购二选一，也可以都关闭。";
+        ? "当前使用固定金额限购。"
+        : finalTimedEnabled
+          ? "当前使用时间金额限购，按开盘后的分钟分档限制买入金额。"
+          : "代币限购、金额限购、时间金额限购三选一，也可以全部关闭。";
   }
 }
 
@@ -2895,29 +3003,51 @@ function syncAdminLimitModeUI(preferredMode = "") {
   const tokenLimitInput = $("maxBuyAmountPerWallet");
   const amountLimitToggle = $("buyAmountLimitEnabled");
   const amountLimitInput = $("maxBuyBaseAmountPerWallet");
-  if (!tokenLimitToggle || !amountLimitToggle) return;
+  const timedLimitToggle = $("timedBuyLimitEnabled");
+  const timedInputs = [
+    $("timedBuyLimitMinute1"),
+    $("timedBuyLimitAmount1"),
+    $("timedBuyLimitMinute2"),
+    $("timedBuyLimitAmount2"),
+    $("timedBuyLimitMinute3"),
+    $("timedBuyLimitAmount3")
+  ];
+  if (!tokenLimitToggle || !amountLimitToggle || !timedLimitToggle) return;
 
   const tokenEnabled = parseBool(tokenLimitToggle.value);
   const amountEnabled = parseBool(amountLimitToggle.value);
+  const timedEnabled = parseBool(timedLimitToggle.value);
 
-  if (tokenEnabled && amountEnabled) {
-    if (preferredMode === "amount") tokenLimitToggle.value = "false";
-    else amountLimitToggle.value = "false";
+  if ((tokenEnabled ? 1 : 0) + (amountEnabled ? 1 : 0) + (timedEnabled ? 1 : 0) > 1) {
+    if (preferredMode === "amount") {
+      tokenLimitToggle.value = "false";
+      timedLimitToggle.value = "false";
+    } else if (preferredMode === "timed") {
+      tokenLimitToggle.value = "false";
+      amountLimitToggle.value = "false";
+    } else {
+      amountLimitToggle.value = "false";
+      timedLimitToggle.value = "false";
+    }
   }
 
   const finalTokenEnabled = parseBool(tokenLimitToggle.value);
   const finalAmountEnabled = parseBool(amountLimitToggle.value);
+  const finalTimedEnabled = parseBool(timedLimitToggle.value);
 
   if (tokenLimitInput) tokenLimitInput.disabled = !finalTokenEnabled;
   if (amountLimitInput) amountLimitInput.disabled = !finalAmountEnabled;
+  timedInputs.forEach((input) => { if (input) input.disabled = !finalTimedEnabled; });
 
   const hint = ensureHintNode("adminLimitModeHint", 'article[data-template-feature="limits"]');
   if (hint) {
     hint.textContent = finalTokenEnabled
       ? "当前后台启用的是代币数量限购。"
       : finalAmountEnabled
-        ? "当前后台启用的是金额限购。"
-        : "当前后台未启用买入限购。";
+        ? "当前后台启用的是固定金额限购。"
+        : finalTimedEnabled
+          ? "当前后台启用的是时间金额限购。"
+          : "当前后台未启用买入限购。";
   }
 }
 
@@ -3464,6 +3594,9 @@ function readDeployLimitConfig(form) {
       maxAmount: 0n,
       amountEnabled: false,
       maxBaseAmount: 0n,
+      timedEnabled: false,
+      timedMinutes: [0n, 0n, 0n],
+      timedAmounts: [0n, 0n, 0n],
       whitelistEnabled: false,
       preLaunchWhitelistEnabled: false
     };
@@ -3473,12 +3606,27 @@ function readDeployLimitConfig(form) {
     maxAmount: parseToken(form.elements.maxBuyAmountPerWallet.value),
     amountEnabled: parseBool(form.elements.buyAmountLimitEnabled.value),
     maxBaseAmount: parseToken(form.elements.maxBuyBaseAmountPerWallet.value),
+    timedEnabled: parseBool(form.elements.timedBuyLimitEnabled.value),
+    timedMinutes: [
+      BigInt(form.elements.timedBuyLimitMinute1.value || 0),
+      BigInt(form.elements.timedBuyLimitMinute2.value || 0),
+      BigInt(form.elements.timedBuyLimitMinute3.value || 0)
+    ],
+    timedAmounts: [
+      parseToken(form.elements.timedBuyLimitAmount1.value),
+      parseToken(form.elements.timedBuyLimitAmount2.value),
+      parseToken(form.elements.timedBuyLimitAmount3.value)
+    ],
     whitelistEnabled: parseBool(form.elements.buyWhitelistEnabled.value),
     preLaunchWhitelistEnabled: parseBool(form.elements.preLaunchBuyWhitelistEnabled.value)
   };
   if (config.enabled && config.amountEnabled) throw new Error("买入限购和金额限购只能二选一，不能同时开启。");
   if (config.enabled && config.maxAmount == 0n) throw new Error("开启限购时，单钱包累计限购代币数必须大于 0。");
   if (config.amountEnabled && config.maxBaseAmount == 0n) throw new Error("开启金额限购时，单钱包累计限购金额必须大于 0。");
+  if ((config.enabled ? 1 : 0) + (config.amountEnabled ? 1 : 0) + (config.timedEnabled ? 1 : 0) > 1) throw new Error("代币限购、金额限购、时间金额限购三者只能开启一个。");
+  if (config.timedEnabled && config.timedAmounts[0] == 0n) throw new Error("开启时间金额限购时，第 1 档金额必须大于 0。");
+  if (Number(config.timedMinutes[1]) > 0 && config.timedMinutes[1] <= config.timedMinutes[0]) throw new Error("时间限购第 2 档分钟必须大于第 1 档。");
+  if (Number(config.timedMinutes[2]) > 0 && config.timedMinutes[2] <= config.timedMinutes[1]) throw new Error("时间限购第 3 档分钟必须大于第 2 档。");
   return config;
 }
 
@@ -3740,6 +3888,9 @@ function deployArgs(form) {
     modules.dividend ? parseToken(fd.get("minTokenDividendBalance")) : 0n,
     limit.amountEnabled,
     limit.maxBaseAmount,
+    limit.timedEnabled,
+    limit.timedMinutes,
+    limit.timedAmounts,
     limit.whitelistEnabled,
     limit.preLaunchWhitelistEnabled
   ];
@@ -4177,6 +4328,10 @@ async function adminAction(action) {
     setMaxBuyAmountPerWallet: () => c.setMaxBuyAmountPerWallet(parseToken($("maxBuyAmountPerWallet").value)),
     setBuyAmountLimitEnabled: () => c.setBuyAmountLimitEnabled(parseBool($("buyAmountLimitEnabled").value)),
     setMaxBuyBaseAmountPerWallet: () => c.setMaxBuyBaseAmountPerWallet(parseToken($("maxBuyBaseAmountPerWallet").value)),
+    setTimedBuyLimitEnabled: () => c.setTimedBuyLimitEnabled(parseBool($("timedBuyLimitEnabled").value)),
+    setTimedBuyLimitTier1: () => c.setTimedBuyLimitTier(0, BigInt($("timedBuyLimitMinute1").value || 0), parseToken($("timedBuyLimitAmount1").value)),
+    setTimedBuyLimitTier2: () => c.setTimedBuyLimitTier(1, BigInt($("timedBuyLimitMinute2").value || 0), parseToken($("timedBuyLimitAmount2").value)),
+    setTimedBuyLimitTier3: () => c.setTimedBuyLimitTier(2, BigInt($("timedBuyLimitMinute3").value || 0), parseToken($("timedBuyLimitAmount3").value)),
     setMinTokenDividendBalance: () => dividendTarget.setMinTokenDividendBalance(parseToken($("minTokenDividendBalance").value)),
     setAutoDividendEnabled: () => dividendTarget.setAutoDividendEnabled(parseBool($("autoDividendEnabled").value)),
     setAutoDividendBatchSize: () => dividendTarget.setAutoDividendBatchSize(BigInt($("autoDividendBatchSize").value)),
@@ -4253,8 +4408,10 @@ formField("dividendMode")?.addEventListener("change", () => {
 });
 formField("buyLimitEnabled")?.addEventListener("change", () => syncDeployLimitModeUI("token"));
 formField("buyAmountLimitEnabled")?.addEventListener("change", () => syncDeployLimitModeUI("amount"));
+formField("timedBuyLimitEnabled")?.addEventListener("change", () => syncDeployLimitModeUI("timed"));
 $("buyLimitEnabled")?.addEventListener("change", () => syncAdminLimitModeUI("token"));
 $("buyAmountLimitEnabled")?.addEventListener("change", () => syncAdminLimitModeUI("amount"));
+$("timedBuyLimitEnabled")?.addEventListener("change", () => syncAdminLimitModeUI("timed"));
 applyTemplateSelection(selectedTemplateVersion());
 renderFeatureSummary();
 syncDividendModeUI();
