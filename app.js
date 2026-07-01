@@ -147,6 +147,7 @@ contract FairMintDividendDistributor is Ownable, ReentrancyGuard {
     }
 
     function dividendExcludedCount() external view returns (uint256) { return dividendExcludedAddresses.length; }
+    function dividendHolderCount() external view returns (uint256) { return dividendHolders.length; }
     function syncBefore(address user) external onlyToken { _accrueTokenDividend(user); }
     function syncAfter(address user) external onlyToken { _settleTokenDividend(user); _trackDividendHolder(user); }
 
@@ -1291,6 +1292,120 @@ const ERC20_ABI = [
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)"
 ];
+const DIVIDEND_DISTRIBUTOR_ABI = [
+  "function rewardTokenAddress() view returns (address)",
+  "function pendingTokenDividend(address user) view returns (uint256)",
+  "function pendingLPDividend(address user) view returns (uint256)",
+  "function dividendReserve() view returns (uint256)",
+  "function minTokenDividendBalance() view returns (uint256)",
+  "function autoDividendEnabled() view returns (bool)",
+  "function autoDividendBatchSize() view returns (uint256)",
+  "function dividendHolderCount() view returns (uint256)",
+  "function dividendExcludedCount() view returns (uint256)",
+  "function eligibleTokenDividendSupply() view returns (uint256)",
+  "function eligibleLPDividendSupply() view returns (uint256)",
+  "function isExcludedFromDividends(address user) view returns (bool)",
+  "function claimDividends()",
+  "function syncLPDividendDebt()",
+  "function setExcludedFromDividends(address user, bool v)",
+  "function batchSetExcludedFromDividends(address[] users, bool v)",
+  "function setRewardToken(address v)",
+  "function setMinTokenDividendBalance(uint256 v)",
+  "function setAutoDividendEnabled(bool v)",
+  "function setAutoDividendBatchSize(uint256 v)",
+  "function fundTokenDividendBNB() payable",
+  "function fundTokenDividendToken(uint256 amount)",
+  "function fundLPDividendBNB() payable",
+  "function fundLPDividendToken(uint256 amount)",
+  "function withdrawDividendReserve(uint256 amount)"
+];
+const ADMIN_TOKEN_ABI = [
+  "function owner() view returns (address)",
+  "function pair() view returns (address)",
+  "function mintMode() view returns (uint8)",
+  "function mintPrice() view returns (uint256)",
+  "function tokenPerMint() view returns (uint256)",
+  "function mintedCount() view returns (uint256)",
+  "function maxMintCount() view returns (uint256)",
+  "function mintEnabled() view returns (bool)",
+  "function tradingOpen() view returns (bool)",
+  "function buyTax() view returns (uint256)",
+  "function sellTax() view returns (uint256)",
+  "function transferTax() view returns (uint256)",
+  "function marketingShare() view returns (uint256)",
+  "function burnShare() view returns (uint256)",
+  "function lpShare() view returns (uint256)",
+  "function dividendShare() view returns (uint256)",
+  "function dividendTargetMode() view returns (uint8)",
+  "function marketingWallet() view returns (address)",
+  "function swapThreshold() view returns (uint256)",
+  "function dividendReserve() view returns (uint256)",
+  "function dividendReserveView() view returns (uint256)",
+  "function buyLimitEnabled() view returns (bool)",
+  "function maxBuyAmountPerWallet() view returns (uint256)",
+  "function minTokenDividendBalance() view returns (uint256)",
+  "function minTokenDividendBalanceView() view returns (uint256)",
+  "function autoDividendEnabled() view returns (bool)",
+  "function autoDividendEnabledView() view returns (bool)",
+  "function autoDividendBatchSize() view returns (uint256)",
+  "function autoDividendBatchSizeView() view returns (uint256)",
+  "function dividendHolderCount() view returns (uint256)",
+  "function buyAmountLimitEnabled() view returns (bool)",
+  "function maxBuyBaseAmountPerWallet() view returns (uint256)",
+  "function buyWhitelistEnabled() view returns (bool)",
+  "function preLaunchBuyWhitelistEnabled() view returns (bool)",
+  "function dividendExcludedCount() view returns (uint256)",
+  "function eligibleTokenDividendSupply() view returns (uint256)",
+  "function eligibleLPDividendSupply() view returns (uint256)",
+  "function taxesLocked() view returns (bool)",
+  "function feeExemptionsLocked() view returns (bool)",
+  "function pauseDisabledForever() view returns (bool)",
+  "function externalDividendDistributorEnabled() view returns (bool)",
+  "function dividendDistributor() view returns (address)",
+  "function rewardTokenAddress() view returns (address)",
+  "function usdtAddress() view returns (address)",
+  "function pendingTokenDividend(address) view returns (uint256)",
+  "function pendingLPDividend(address) view returns (uint256)",
+  "function setMintPrice(uint256)",
+  "function setTokenPerMint(uint256)",
+  "function setMaxMintCount(uint256)",
+  "function setLaunchTime(uint256)",
+  "function openTrading()",
+  "function closeMint()",
+  "function pause()",
+  "function unpause()",
+  "function disablePauseForever()",
+  "function setWhitelistEnabled(bool)",
+  "function setWhitelist(address,bool)",
+  "function batchSetWhitelist(address[],bool)",
+  "function setBuyWhitelistEnabled(bool)",
+  "function setBuyWhitelist(address,bool)",
+  "function batchSetBuyWhitelist(address[],bool)",
+  "function setPreLaunchBuyWhitelistEnabled(bool)",
+  "function setPreLaunchBuyWhitelist(address,bool)",
+  "function batchSetPreLaunchBuyWhitelist(address[],bool)",
+  "function setExcludedFromFee(address,bool)",
+  "function lockFeeExemptions()",
+  "function setBuyTax(uint256)",
+  "function setSellTax(uint256)",
+  "function setTransferTax(uint256)",
+  "function setTaxShares(uint256,uint256,uint256,uint256)",
+  "function lockTaxes()",
+  "function setMarketingWallet(address)",
+  "function setDividendTargetMode(uint256)",
+  "function setSwapThreshold(uint256)",
+  "function setBuyLimitEnabled(bool)",
+  "function setMaxBuyAmountPerWallet(uint256)",
+  "function setBuyAmountLimitEnabled(bool)",
+  "function setMaxBuyBaseAmountPerWallet(uint256)",
+  "function processPendingDividends()",
+  "function forceSwapBack()",
+  "function forceAddLiquidity(uint256,uint256)",
+  "function withdrawBNB(uint256)",
+  "function withdrawToken(address,uint256)",
+  "function withdrawLP(uint256)",
+  "function renounceOwnership()"
+];
 function compiledConstructorTypes() {
   const constructor = state.compiled?.abi?.find((item) => item.type === "constructor");
   if (!constructor) throw new Error("编译结果中没有找到构造函数。");
@@ -1371,7 +1486,15 @@ async function dividendContractInfo(tokenContract) {
 async function dividendAdminContract(tokenContract) {
   const info = await dividendContractInfo(tokenContract);
   if (!info.enabled) return tokenContract;
-  return new ethers.Contract(info.address, state.compiled.distributorAbi, state.signer);
+  return new ethers.Contract(info.address, DIVIDEND_DISTRIBUTOR_ABI, state.signer);
+}
+
+async function readValue(promiseFactory, fallback) {
+  try {
+    return await promiseFactory();
+  } catch {
+    return fallback;
+  }
 }
 
 function makeDownload(id, filename, content, type = "application/json") {
@@ -2084,6 +2207,7 @@ contract FairMintDividendDistributor is Ownable, ReentrancyGuard {
     }
 
     function dividendExcludedCount() external view returns (uint256) { return dividendExcludedAddresses.length; }
+    function dividendHolderCount() external view returns (uint256) { return dividendHolders.length; }
     function syncBefore(address user) external onlyToken { _accrueTokenDividend(user); }
     function syncAfter(address user) external onlyToken { _settleTokenDividend(user); _trackDividendHolder(user); }
     function notifyTokenDividendNative() external payable onlyToken { require(_isNativeReward(), "not native reward"); _fundTokenDividendManual(msg.value); }
@@ -3887,6 +4011,11 @@ async function contractAt(address) {
   return new ethers.Contract(address, state.compiled.abi, state.signer);
 }
 
+async function adminContractAt(address) {
+  await ensureWallet();
+  return new ethers.Contract(address, ADMIN_TOKEN_ABI, state.signer);
+}
+
 async function refreshMint() {
   if (!state.mint) return;
   const reward = await rewardInfo(state.mint);
@@ -3921,21 +4050,21 @@ async function refreshAdmin() {
     dividendExcludedCount, eligibleTokenDividendSupply, eligibleLPDividendSupply,
     taxesLocked, feeExemptionsLocked, pauseDisabledForever, externalDividendDistributorEnabled, dividendDistributor
   ] = await Promise.all([
-    state.admin.owner(), state.admin.pair(), state.admin.mintMode(), state.admin.mintPrice(), state.admin.tokenPerMint(),
-    state.admin.mintedCount(), state.admin.maxMintCount(), state.admin.mintEnabled(), state.admin.tradingOpen(),
-    state.admin.buyTax(), state.admin.sellTax(), state.admin.transferTax(), state.admin.marketingShare(),
-    state.admin.burnShare(), state.admin.lpShare(), state.admin.dividendShare(), state.admin.dividendTargetMode().catch(() => 0), state.admin.marketingWallet(), state.admin.swapThreshold(),
-    state.admin.dividendReserveView ? state.admin.dividendReserveView() : state.admin.dividendReserve(), state.admin.buyLimitEnabled(), state.admin.maxBuyAmountPerWallet(), state.admin.minTokenDividendBalanceView ? state.admin.minTokenDividendBalanceView() : state.admin.minTokenDividendBalance(),
-    state.admin.autoDividendEnabledView ? state.admin.autoDividendEnabledView() : state.admin.autoDividendEnabled(), state.admin.autoDividendBatchSizeView ? state.admin.autoDividendBatchSizeView() : state.admin.autoDividendBatchSize(), state.admin.dividendHolderCount(),
-    state.admin.buyAmountLimitEnabled(), state.admin.maxBuyBaseAmountPerWallet(),
-    state.admin.buyWhitelistEnabled(),
-    state.admin.preLaunchBuyWhitelistEnabled(),
-    state.admin.dividendExcludedCount(), state.admin.eligibleTokenDividendSupply(), state.admin.eligibleLPDividendSupply(),
-    state.admin.taxesLocked(), state.admin.feeExemptionsLocked(), state.admin.pauseDisabledForever(),
-    state.admin.externalDividendDistributorEnabled().catch(() => false), state.admin.dividendDistributor().catch(() => ZERO)
+    readValue(() => state.admin.owner(), ZERO), readValue(() => state.admin.pair(), ZERO), readValue(() => state.admin.mintMode(), 0), readValue(() => state.admin.mintPrice(), 0n), readValue(() => state.admin.tokenPerMint(), 0n),
+    readValue(() => state.admin.mintedCount(), 0n), readValue(() => state.admin.maxMintCount(), 0n), readValue(() => state.admin.mintEnabled(), false), readValue(() => state.admin.tradingOpen(), false),
+    readValue(() => state.admin.buyTax(), 0n), readValue(() => state.admin.sellTax(), 0n), readValue(() => state.admin.transferTax(), 0n), readValue(() => state.admin.marketingShare(), 0n),
+    readValue(() => state.admin.burnShare(), 0n), readValue(() => state.admin.lpShare(), 0n), readValue(() => state.admin.dividendShare(), 0n), readValue(() => state.admin.dividendTargetMode(), 0), readValue(() => state.admin.marketingWallet(), ZERO), readValue(() => state.admin.swapThreshold(), 0n),
+    readValue(() => state.admin.dividendReserveView ? state.admin.dividendReserveView() : state.admin.dividendReserve(), 0n), readValue(() => state.admin.buyLimitEnabled(), false), readValue(() => state.admin.maxBuyAmountPerWallet(), 0n), readValue(() => state.admin.minTokenDividendBalanceView ? state.admin.minTokenDividendBalanceView() : state.admin.minTokenDividendBalance(), 0n),
+    readValue(() => state.admin.autoDividendEnabledView ? state.admin.autoDividendEnabledView() : state.admin.autoDividendEnabled(), false), readValue(() => state.admin.autoDividendBatchSizeView ? state.admin.autoDividendBatchSizeView() : state.admin.autoDividendBatchSize(), 0n), readValue(() => state.admin.dividendHolderCount(), 0n),
+    readValue(() => state.admin.buyAmountLimitEnabled(), false), readValue(() => state.admin.maxBuyBaseAmountPerWallet(), 0n),
+    readValue(() => state.admin.buyWhitelistEnabled(), false),
+    readValue(() => state.admin.preLaunchBuyWhitelistEnabled(), false),
+    readValue(() => state.admin.dividendExcludedCount(), 0n), readValue(() => state.admin.eligibleTokenDividendSupply(), 0n), readValue(() => state.admin.eligibleLPDividendSupply(), 0n),
+    readValue(() => state.admin.taxesLocked(), false), readValue(() => state.admin.feeExemptionsLocked(), false), readValue(() => state.admin.pauseDisabledForever(), false),
+    readValue(() => state.admin.externalDividendDistributorEnabled(), false), readValue(() => state.admin.dividendDistributor(), ZERO)
   ]);
   state.dividendAdmin = externalDividendDistributorEnabled && dividendDistributor !== ZERO
-    ? new ethers.Contract(dividendDistributor, state.compiled.distributorAbi, state.signer)
+    ? new ethers.Contract(dividendDistributor, DIVIDEND_DISTRIBUTOR_ABI, state.signer)
     : null;
   renderStats("adminStats", [
     ["Owner", owner], ["Pair", pair], ["Mint 模式", Number(mintMode) === 0 ? "BNB" : "USDT"],
@@ -3981,7 +4110,7 @@ async function mintNow() {
 
 async function adminAction(action) {
   await ensureWallet();
-  if (!state.admin) state.admin = await contractAt($("adminContractAddress").value.trim());
+  if (!state.admin) state.admin = await adminContractAt($("adminContractAddress").value.trim());
   const c = state.admin;
   const contractAddress = await c.getAddress();
   const listAddress = $("listAddress").value.trim();
@@ -4088,7 +4217,18 @@ $("deployForm").addEventListener("submit", async (e) => {
 $("loadMintInfo").addEventListener("click", async (e) => run(e.currentTarget, async () => { applyTemplateForAddress($("mintContractAddress").value.trim()); state.mint = await contractAt($("mintContractAddress").value.trim()); await refreshMint(); }));
 $("mintNow").addEventListener("click", async (e) => run(e.currentTarget, mintNow));
 $("claimDividends").addEventListener("click", async (e) => run(e.currentTarget, async () => { if (!state.mint) state.mint = await contractAt($("mintContractAddress").value.trim()); await txDone(await state.mint.claimDividends(), "领取分红"); await refreshMint(); }));
-$("loadAdmin").addEventListener("click", async (e) => run(e.currentTarget, async () => { applyTemplateForAddress($("adminContractAddress").value.trim()); state.admin = await contractAt($("adminContractAddress").value.trim()); await refreshAdmin(); }));
+$("loadAdmin").addEventListener("click", async (e) => run(e.currentTarget, async () => {
+  const address = $("adminContractAddress").value.trim();
+  applyTemplateForAddress(address);
+  state.admin = await adminContractAt(address);
+  try {
+    await refreshAdmin();
+    const info = await dividendContractInfo(state.admin);
+    if (info.enabled) log(`宸叉娴嬪埌鐙珛鍒嗙孩鍚堢害锛?${info.address}`);
+  } catch (error) {
+    log(`管理员统计读取部分失败：${error?.shortMessage || error?.message || error}`);
+  }
+}));
 $("refreshAdmin").addEventListener("click", async (e) => run(e.currentTarget, refreshAdmin));
 document.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", async () => run(btn, () => adminAction(btn.dataset.action))));
 formField("templateVersion")?.addEventListener("change", (e) => applyTemplateSelection(e.target.value));
