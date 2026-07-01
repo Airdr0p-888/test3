@@ -467,7 +467,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     event DividendClaimed(address indexed user, uint256 tokenReward, uint256 lpReward);
     event AutoDividendProcessed(uint256 processed, uint256 paid);
     modifier lockSwap() { inSwap = true; _; inSwap = false; }
-    constructor(string memory name_, string memory symbol_, uint256 totalSupply_, MintMode mintMode_, address usdtAddress_, address router_, uint256 mintPrice_, uint256 tokenPerMint_, uint256 maxMintCount_, UserMintMode userMintMode_, uint256 userMintShare_, uint256 userMintAmount_, uint256 lpFundShare_, LaunchMode launchMode_, uint256 launchTime_, address marketingWallet_, address owner_, address rewardToken_, uint8 dividendTargetMode_, uint256 buyTax_, uint256 sellTax_, uint256 transferTax_, uint256 marketingShare_, uint256 burnShare_, uint256 lpShare_, uint256 dividendShare_, bool buyLimitEnabled_, uint256 maxBuyAmountPerWallet_, uint256 minTokenDividendBalance_, bool buyAmountLimitEnabled_, uint256 maxBuyBaseAmountPerWallet_, bool buyWhitelistEnabled_, bool preLaunchBuyWhitelistEnabled_) ERC20(name_, symbol_) Ownable(owner_) {
+    constructor(string memory name_, string memory symbol_, uint256 totalSupply_, MintMode mintMode_, address usdtAddress_, address router_, uint256 mintPrice_, uint256 tokenPerMint_, uint256 maxMintCount_, UserMintMode userMintMode_, uint256 userMintShare_, uint256 userMintAmount_, uint256 lpFundShare_, LaunchMode launchMode_, uint256 launchTime_, bool mintFeatureEnabled_, address marketingWallet_, address owner_, address rewardToken_, uint8 dividendTargetMode_, uint256 buyTax_, uint256 sellTax_, uint256 transferTax_, uint256 marketingShare_, uint256 burnShare_, uint256 lpShare_, uint256 dividendShare_, bool buyLimitEnabled_, uint256 maxBuyAmountPerWallet_, uint256 minTokenDividendBalance_, bool buyAmountLimitEnabled_, uint256 maxBuyBaseAmountPerWallet_, bool buyWhitelistEnabled_, bool preLaunchBuyWhitelistEnabled_) ERC20(name_, symbol_) Ownable(owner_) {
         require(totalSupply_ > 0, "totalSupply zero");
         require(router_ != address(0), "router zero");
         require(marketingWallet_ != address(0), "marketing zero");
@@ -494,8 +494,9 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         userMintShare = userMintShare_;
         userMintAmount = userMintAmount_;
         lpFundShare = lpFundShare_;
-        launchMode = launchMode_;
+        launchMode = mintFeatureEnabled_ ? launchMode_ : LaunchMode.MANUAL;
         _setLaunchTime(launchTime_);
+        mintEnabled = mintFeatureEnabled_;
         marketingWallet = marketingWallet_;
         rewardToken = rewardToken_;
         buyTax = buyTax_;
@@ -515,7 +516,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         deadWallet = 0x000000000000000000000000000000000000dEaD;
         address base = mintMode_ == MintMode.BNB ? router.WETH() : usdtAddress_;
         pair = IPancakeFactoryV2(router.factory()).createPair(address(this), base);
-        _mint(address(this), totalSupply_);
+        _mint(mintFeatureEnabled_ ? address(this) : owner_, totalSupply_);
         swapThreshold = totalSupply_ / 1000;
         isExcludedFromLimits[owner_] = true;
         isExcludedFromLimits[address(this)] = true;
@@ -877,6 +878,11 @@ interface IPancakeFactoryV2Lite {
     function createPair(address tokenA, address tokenB) external returns (address pair);
 }
 
+interface IPancakePairV2Lite {
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function token0() external view returns (address);
+}
+
 contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -934,8 +940,12 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     uint256 public maxBuyAmountPerWallet;
     bool public buyAmountLimitEnabled;
     uint256 public maxBuyBaseAmountPerWallet;
+    mapping(address => uint256) public boughtAmount;
+    mapping(address => uint256) public boughtBaseAmount;
     bool public buyWhitelistEnabled;
+    mapping(address => bool) public buyWhitelist;
     bool public preLaunchBuyWhitelistEnabled;
+    mapping(address => bool) public preLaunchBuyWhitelist;
     bool public autoDividendEnabled;
     uint256 public autoDividendBatchSize;
     uint256 public minTokenDividendBalance;
@@ -964,6 +974,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         uint256 lpFundShare_,
         LaunchMode launchMode_,
         uint256 launchTime_,
+        bool mintFeatureEnabled_,
         address marketingWallet_,
         address owner_,
         address rewardToken_,
@@ -1006,11 +1017,12 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         userMintShare = userMintShare_;
         userMintAmount = userMintAmount_;
         lpFundShare = lpFundShare_;
-        launchMode = launchMode_;
+        launchMode = mintFeatureEnabled_ ? launchMode_ : LaunchMode.MANUAL;
         launchTime = launchTime_;
         startTime = launchTime_;
         openTime = launchTime_;
         tradingStartTime = launchTime_;
+        mintEnabled = mintFeatureEnabled_;
         marketingWallet = marketingWallet_;
         rewardToken = rewardToken_;
         dividendTargetMode = dividendTargetMode_;
@@ -1034,7 +1046,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         deadWallet = 0x000000000000000000000000000000000000dEaD;
         address base = mintMode_ == MintMode.BNB ? router.WETH() : usdtAddress_;
         pair = IPancakeFactoryV2Lite(router.factory()).createPair(address(this), base);
-        _mint(address(this), totalSupply_);
+        _mint(mintFeatureEnabled_ ? address(this) : owner_, totalSupply_);
         swapThreshold = totalSupply_ / 1000;
         isExcludedFromLimits[owner_] = true;
         isExcludedFromLimits[address(this)] = true;
@@ -1042,6 +1054,10 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         isExcludedFromFee[owner_] = true;
         isExcludedFromFee[address(this)] = true;
         isExcludedFromFee[router_] = true;
+        buyWhitelist[owner_] = true;
+        buyWhitelist[address(this)] = true;
+        buyWhitelist[router_] = true;
+        preLaunchBuyWhitelist[owner_] = true;
     }
 
     receive() external payable nonReentrant whenNotPaused { if (msg.sender == address(router)) return; _mintBNB(msg.sender, msg.value); }
@@ -1109,9 +1125,11 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
 
     function _update(address from, address to, uint256 amount) internal override {
         if (from == address(0) || to == address(0)) { super._update(from, to, amount); return; }
+        uint256 grossAmount = amount;
         if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; emit TradingOpened(block.timestamp); }
         bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
-        if (!tradingOpen && !exemptLimit) revert("trading not open");
+        bool preLaunchBuy = !tradingOpen && from == pair && preLaunchBuyWhitelistEnabled && preLaunchBuyWhitelist[to];
+        if (!tradingOpen && !exemptLimit && !preLaunchBuy) revert("trading not open");
         if (!inSwap && swapEnabled && from != pair && from != address(this)) {
             uint256 taxTokenBalance = pendingTaxTokens;
             if (taxTokenBalance >= swapThreshold && swapThreshold > 0) _swapBack(taxTokenBalance);
@@ -1129,7 +1147,20 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
             pendingTaxTokens += taxAmount;
             amount -= taxAmount;
         }
+        if (from == pair && buyWhitelistEnabled && !preLaunchBuy) require(buyWhitelist[to], "buy whitelist");
+        if (buyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtAmount[to] += amount; require(boughtAmount[to] <= maxBuyAmountPerWallet, "buy limit"); }
+        if (buyAmountLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= maxBuyBaseAmountPerWallet, "buy amount limit"); }
         super._update(from, to, amount);
+    }
+
+    function _baseAmountForBuy(uint256 tokenAmountOut) internal view returns (uint256) {
+        IPancakePairV2Lite mainPair = IPancakePairV2Lite(pair);
+        (uint112 reserve0, uint112 reserve1,) = mainPair.getReserves();
+        bool tokenIs0 = mainPair.token0() == address(this);
+        uint256 reserveOut = tokenIs0 ? uint256(reserve0) : uint256(reserve1);
+        uint256 reserveIn = tokenIs0 ? uint256(reserve1) : uint256(reserve0);
+        require(tokenAmountOut > 0 && tokenAmountOut < reserveOut, "bad buy amount");
+        return reserveIn * tokenAmountOut * 10000 / ((reserveOut - tokenAmountOut) * 9975) + 1;
     }
 
     function _baseBalance() internal view returns (uint256) { return mintMode == MintMode.BNB ? address(this).balance : IERC20(usdtAddress).balanceOf(address(this)); }
@@ -1211,11 +1242,11 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function setBuyAmountLimitEnabled(bool v) external onlyOwner { if (v) buyLimitEnabled = false; buyAmountLimitEnabled = v; }
     function setMaxBuyBaseAmountPerWallet(uint256 v) external onlyOwner { maxBuyBaseAmountPerWallet = v; }
     function setBuyWhitelistEnabled(bool v) external onlyOwner { buyWhitelistEnabled = v; }
-    function setBuyWhitelist(address, bool) external pure {}
-    function batchSetBuyWhitelist(address[] calldata, bool) external pure {}
+    function setBuyWhitelist(address user, bool v) external onlyOwner { require(user != address(0), "zero address"); buyWhitelist[user] = v; }
+    function batchSetBuyWhitelist(address[] calldata users, bool v) external onlyOwner { for (uint256 i; i < users.length; i++) { require(users[i] != address(0), "zero address"); buyWhitelist[users[i]] = v; } }
     function setPreLaunchBuyWhitelistEnabled(bool v) external onlyOwner { preLaunchBuyWhitelistEnabled = v; }
-    function setPreLaunchBuyWhitelist(address, bool) external pure {}
-    function batchSetPreLaunchBuyWhitelist(address[] calldata, bool) external pure {}
+    function setPreLaunchBuyWhitelist(address user, bool v) external onlyOwner { require(user != address(0), "zero address"); preLaunchBuyWhitelist[user] = v; }
+    function batchSetPreLaunchBuyWhitelist(address[] calldata users, bool v) external onlyOwner { for (uint256 i; i < users.length; i++) { require(users[i] != address(0), "zero address"); preLaunchBuyWhitelist[users[i]] = v; } }
     function lockTaxes() external onlyOwner { taxesLocked = true; }
     function lockFeeExemptions() external onlyOwner { feeExemptionsLocked = true; }
     function disablePauseForever() external onlyOwner { pauseDisabledForever = true; }
@@ -1642,15 +1673,15 @@ const TEMPLATE_SOURCE_BINDINGS = {
 };
 
 const FEATURE_PRESETS = {
-  light: { tax: false, dividend: false, lpDividend: false, limits: false },
-  mint: { tax: false, dividend: false, lpDividend: false, limits: false },
-  tax: { tax: true, dividend: false, lpDividend: false, limits: false },
-  mintTax: { tax: true, dividend: false, lpDividend: false, limits: false },
-  dividendInternal: { tax: true, dividend: true, lpDividend: false, limits: false },
-  dividendExternal: { tax: true, dividend: true, lpDividend: false, limits: false },
-  lpDividend: { tax: true, dividend: true, lpDividend: true, limits: false },
-  advanced: { tax: true, dividend: false, lpDividend: false, limits: true },
-  trade: { tax: true, dividend: false, lpDividend: false, limits: false }
+  light: { mint: true, tax: false, dividend: false, lpDividend: false, limits: false },
+  mint: { mint: true, tax: false, dividend: false, lpDividend: false, limits: false },
+  tax: { mint: false, tax: true, dividend: false, lpDividend: false, limits: false },
+  mintTax: { mint: true, tax: true, dividend: false, lpDividend: false, limits: false },
+  dividendInternal: { mint: true, tax: true, dividend: true, lpDividend: false, limits: false },
+  dividendExternal: { mint: true, tax: true, dividend: true, lpDividend: false, limits: false },
+  lpDividend: { mint: true, tax: true, dividend: true, lpDividend: true, limits: false },
+  advanced: { mint: true, tax: true, dividend: false, lpDividend: false, limits: true },
+  trade: { mint: false, tax: true, dividend: false, lpDividend: false, limits: false }
 };
 
 function setFeatureToggle(name, checked) {
@@ -1659,16 +1690,18 @@ function setFeatureToggle(name, checked) {
 }
 
 function selectedModuleConfig() {
+  const mint = !!formField("featureMint")?.checked;
   const tax = !!formField("featureTax")?.checked;
   const dividend = !!formField("featureDividend")?.checked;
   const lpDividend = !!formField("featureLPDividend")?.checked;
   const limits = !!formField("featureLimits")?.checked;
-  return { tax, dividend, lpDividend, limits };
+  return { mint, tax, dividend, lpDividend, limits };
 }
 
 function selectedFeatureSet() {
   const modules = selectedModuleConfig();
-  const set = new Set(["mint", "launch"]);
+  const set = new Set(["launch"]);
+  if (modules.mint) set.add("mint");
   if (modules.tax) set.add("tax");
   if (modules.dividend) set.add("dividend");
   if (modules.lpDividend) {
@@ -1679,13 +1712,283 @@ function selectedFeatureSet() {
   return set;
 }
 
+function moduleVariantKey(modules = selectedModuleConfig()) {
+  return [
+    modules.mint ? "mint" : "nomint",
+    modules.tax ? "tax" : "notax",
+    modules.dividend ? "div" : "nodiv",
+    modules.lpDividend ? "lpdiv" : "nolpdiv",
+    modules.limits ? "limits" : "nolimits"
+  ].join("-");
+}
+
+function replaceRequired(source, from, to, label) {
+  if (!source.includes(from)) {
+    throw new Error(`assemble source missing block: ${label}`);
+  }
+  return source.replace(from, to);
+}
+
+const LITE_MINT_BLOCK = String.raw`    receive() external payable nonReentrant whenNotPaused { if (msg.sender == address(router)) return; _mintBNB(msg.sender, msg.value); }
+    function decimals() public pure override returns (uint8) { return 18; }
+    function dividendMode() external pure returns (uint8) { return 0; }
+    function activeDividendContract() external view returns (address) { return address(this); }
+    function rewardTokenAddress() public view returns (address) { return rewardToken == address(0) ? (mintMode == MintMode.BNB ? address(0) : usdtAddress) : rewardToken; }
+    function dividendReserveView() external pure returns (uint256) { return 0; }
+    function minTokenDividendBalanceView() external view returns (uint256) { return minTokenDividendBalance; }
+    function autoDividendEnabledView() external view returns (bool) { return autoDividendEnabled; }
+    function autoDividendBatchSizeView() external view returns (uint256) { return autoDividendBatchSize; }
+    function processPendingDividends() external pure {}
+    function isDividendExcluded(address) external pure returns (bool) { return false; }
+    function dividendExcludedCount() external pure returns (uint256) { return 0; }
+    function dividendHolderCount() external pure returns (uint256) { return 0; }
+    function eligibleTokenDividendSupply() public view returns (uint256) { return totalSupply(); }
+    function eligibleLPDividendSupply() public pure returns (uint256) { return 0; }
+    function pendingTokenDividend(address) public pure returns (uint256) { return 0; }
+    function pendingLPDividend(address) public pure returns (uint256) { return 0; }
+    function claimDividends() external pure { revert("dividend disabled"); }
+    function syncLPDividendDebt() external pure {}
+    function setDividendDistributor(address distributor, bool enabled) external onlyOwner { dividendDistributor = distributor; externalDividendDistributorEnabled = enabled && distributor != address(0); }
+    function setExcludedFromDividends(address, bool) external pure {}
+    function batchSetExcludedFromDividends(address[] calldata, bool) external pure {}
+    function setMinTokenDividendBalance(uint256 v) external onlyOwner { minTokenDividendBalance = v; }
+    function setAutoDividendEnabled(bool v) external onlyOwner { autoDividendEnabled = v; }
+    function setAutoDividendBatchSize(uint256 v) external onlyOwner { autoDividendBatchSize = v; }
+    function fundTokenDividendBNB() external payable onlyOwner {}
+    function fundTokenDividendToken(uint256) public pure {}
+    function fundTokenDividendUSDT(uint256) external pure {}
+    function fundLPDividendBNB() external payable onlyOwner {}
+    function fundLPDividendToken(uint256) public pure {}
+    function fundLPDividendUSDT(uint256) external pure {}
+    function withdrawDividendReserve(uint256) external pure {}
+    function setRewardToken(address v) external onlyOwner { rewardToken = v; }
+    function setDividendTargetMode(uint8 v) external onlyOwner { dividendTargetMode = v; }
+
+    function mintBNB() external payable nonReentrant whenNotPaused { _mintBNB(msg.sender, msg.value); }
+    function _mintBNB(address user, uint256 amount) internal { require(mintMode == MintMode.BNB, "not BNB mode"); require(amount == mintPrice, "bad BNB amount"); _mintFlow(user, amount); }
+    function mintUSDT() external nonReentrant whenNotPaused { require(mintMode == MintMode.USDT, "not USDT mode"); IERC20(usdtAddress).safeTransferFrom(msg.sender, address(this), mintPrice); _mintFlow(msg.sender, mintPrice); }
+
+    function _mintFlow(address user, uint256 paidAmount) internal {
+        require(mintEnabled, "mint disabled");
+        require(!hasMinted[user], "already minted");
+        require(mintedCount < maxMintCount, "mint full");
+        if (whitelistEnabled) require(whitelist[user], "not whitelisted");
+        hasMinted[user] = true;
+        mintedCount += 1;
+        uint256 userTokens = userMintMode == UserMintMode.FIXED ? userMintAmount : tokenPerMint * userMintShare / DENOMINATOR;
+        uint256 lpTokens = tokenPerMint - userTokens;
+        uint256 lpFund = paidAmount * lpFundShare / DENOMINATOR;
+        require(balanceOf(address(this)) >= tokenPerMint, "insufficient token reserve");
+        if (lpTokens > 0 && lpFund > 0) {
+            _approve(address(this), address(router), lpTokens);
+            if (mintMode == MintMode.BNB) router.addLiquidityETH{value: lpFund}(address(this), lpTokens, 0, 0, owner(), block.timestamp);
+            else {
+                IERC20(usdtAddress).forceApprove(address(router), lpFund);
+                router.addLiquidity(address(this), usdtAddress, lpTokens, lpFund, 0, 0, owner(), block.timestamp);
+            }
+        }
+        if (userTokens > 0) _transfer(address(this), user, userTokens);
+        emit Minted(user, paidAmount, userTokens, lpTokens, lpFund);
+        if (mintedCount >= maxMintCount) { mintEnabled = false; if (launchMode == LaunchMode.AUTO) _openTrading(); }
+    }
+`;
+
+const LITE_MINT_DISABLED_BLOCK = String.raw`    receive() external payable { revert("mint disabled"); }
+    function decimals() public pure override returns (uint8) { return 18; }
+    function dividendMode() external pure returns (uint8) { return 0; }
+    function activeDividendContract() external view returns (address) { return address(this); }
+    function rewardTokenAddress() public view returns (address) { return rewardToken == address(0) ? (mintMode == MintMode.BNB ? address(0) : usdtAddress) : rewardToken; }
+    function dividendReserveView() external pure returns (uint256) { return 0; }
+    function minTokenDividendBalanceView() external view returns (uint256) { return minTokenDividendBalance; }
+    function autoDividendEnabledView() external view returns (bool) { return autoDividendEnabled; }
+    function autoDividendBatchSizeView() external view returns (uint256) { return autoDividendBatchSize; }
+    function processPendingDividends() external pure {}
+    function isDividendExcluded(address) external pure returns (bool) { return false; }
+    function dividendExcludedCount() external pure returns (uint256) { return 0; }
+    function dividendHolderCount() external pure returns (uint256) { return 0; }
+    function eligibleTokenDividendSupply() public view returns (uint256) { return totalSupply(); }
+    function eligibleLPDividendSupply() public pure returns (uint256) { return 0; }
+    function pendingTokenDividend(address) public pure returns (uint256) { return 0; }
+    function pendingLPDividend(address) public pure returns (uint256) { return 0; }
+    function claimDividends() external pure { revert("dividend disabled"); }
+    function syncLPDividendDebt() external pure {}
+    function setDividendDistributor(address distributor, bool enabled) external onlyOwner { dividendDistributor = distributor; externalDividendDistributorEnabled = enabled && distributor != address(0); }
+    function setExcludedFromDividends(address, bool) external pure {}
+    function batchSetExcludedFromDividends(address[] calldata, bool) external pure {}
+    function setMinTokenDividendBalance(uint256 v) external onlyOwner { minTokenDividendBalance = v; }
+    function setAutoDividendEnabled(bool v) external onlyOwner { autoDividendEnabled = v; }
+    function setAutoDividendBatchSize(uint256 v) external onlyOwner { autoDividendBatchSize = v; }
+    function fundTokenDividendBNB() external payable onlyOwner {}
+    function fundTokenDividendToken(uint256) public pure {}
+    function fundTokenDividendUSDT(uint256) external pure {}
+    function fundLPDividendBNB() external payable onlyOwner {}
+    function fundLPDividendToken(uint256) public pure {}
+    function fundLPDividendUSDT(uint256) external pure {}
+    function withdrawDividendReserve(uint256) external pure {}
+    function setRewardToken(address v) external onlyOwner { rewardToken = v; }
+    function setDividendTargetMode(uint8 v) external onlyOwner { dividendTargetMode = v; }
+
+    function mintBNB() external payable { revert("mint disabled"); }
+    function _mintBNB(address, uint256) internal pure { revert("mint disabled"); }
+    function mintUSDT() external pure { revert("mint disabled"); }
+    function _mintFlow(address, uint256) internal pure { revert("mint disabled"); }
+`;
+
+const LITE_TAX_BLOCK = String.raw`    function _update(address from, address to, uint256 amount) internal override {
+        if (from == address(0) || to == address(0)) { super._update(from, to, amount); return; }
+        uint256 grossAmount = amount;
+        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) { tradingOpen = true; emit TradingOpened(block.timestamp); }
+        bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
+        bool preLaunchBuy = !tradingOpen && from == pair && preLaunchBuyWhitelistEnabled && preLaunchBuyWhitelist[to];
+        if (!tradingOpen && !exemptLimit && !preLaunchBuy) revert("trading not open");
+        if (!inSwap && swapEnabled && from != pair && from != address(this)) {
+            uint256 taxTokenBalance = pendingTaxTokens;
+            if (taxTokenBalance >= swapThreshold && swapThreshold > 0) _swapBack(taxTokenBalance);
+        }
+        uint256 taxAmount = 0;
+        if (!inSwap && !isExcludedFromFee[from] && !isExcludedFromFee[to]) {
+            uint256 taxRate;
+            if (from == pair) taxRate = buyTax;
+            else if (to == pair) taxRate = sellTax;
+            else taxRate = transferTax;
+            if (taxRate > 0) taxAmount = amount * taxRate / DENOMINATOR;
+        }
+        if (taxAmount > 0) {
+            super._update(from, address(this), taxAmount);
+            pendingTaxTokens += taxAmount;
+            amount -= taxAmount;
+        }
+        if (from == pair && buyWhitelistEnabled && !preLaunchBuy) require(buyWhitelist[to], "buy whitelist");
+        if (buyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtAmount[to] += amount; require(boughtAmount[to] <= maxBuyAmountPerWallet, "buy limit"); }
+        if (buyAmountLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= maxBuyBaseAmountPerWallet, "buy amount limit"); }
+        super._update(from, to, amount);
+    }
+
+    function _baseAmountForBuy(uint256 tokenAmountOut) internal view returns (uint256) {
+        IPancakePairV2Lite mainPair = IPancakePairV2Lite(pair);
+        (uint112 reserve0, uint112 reserve1,) = mainPair.getReserves();
+        bool tokenIs0 = mainPair.token0() == address(this);
+        uint256 reserveOut = tokenIs0 ? uint256(reserve0) : uint256(reserve1);
+        uint256 reserveIn = tokenIs0 ? uint256(reserve1) : uint256(reserve0);
+        require(tokenAmountOut > 0 && tokenAmountOut < reserveOut, "bad buy amount");
+        return reserveIn * tokenAmountOut * 10000 / ((reserveOut - tokenAmountOut) * 9975) + 1;
+    }
+
+    function _baseBalance() internal view returns (uint256) { return mintMode == MintMode.BNB ? address(this).balance : IERC20(usdtAddress).balanceOf(address(this)); }
+    function _sendBase(address to, uint256 amount) internal { if (amount == 0) return; if (mintMode == MintMode.BNB) payable(to).transfer(amount); else IERC20(usdtAddress).safeTransfer(to, amount); }
+
+    function _swapBack(uint256 tokenAmount) internal lockSwap {
+        uint256 totalShare = marketingShare + burnShare + lpShare + dividendShare;
+        if (totalShare == 0 || tokenAmount == 0) return;
+        if (tokenAmount > pendingTaxTokens) tokenAmount = pendingTaxTokens;
+        if (tokenAmount == 0) return;
+        pendingTaxTokens -= tokenAmount;
+        uint256 burnTokens = tokenAmount * burnShare / totalShare;
+        uint256 lpTokens = tokenAmount * lpShare / totalShare;
+        uint256 dividendTokens = tokenAmount * dividendShare / totalShare;
+        uint256 marketingTokens = tokenAmount - burnTokens - lpTokens - dividendTokens;
+        if (burnTokens > 0) super._update(address(this), deadWallet, burnTokens);
+        uint256 lpTokenHalf = lpTokens / 2;
+        uint256 tokensToSwap = marketingTokens + dividendTokens + lpTokenHalf;
+        uint256 received;
+        if (tokensToSwap > 0) {
+            uint256 beforeBal = _baseBalance();
+            _approve(address(this), address(router), tokensToSwap);
+            if (mintMode == MintMode.BNB) {
+                address[] memory path = new address[](2);
+                path[0] = address(this);
+                path[1] = router.WETH();
+                router.swapExactTokensForETHSupportingFeeOnTransferTokens(tokensToSwap, 0, path, address(this), block.timestamp);
+            } else {
+                address[] memory path = new address[](2);
+                path[0] = address(this);
+                path[1] = usdtAddress;
+                router.swapExactTokensForTokensSupportingFeeOnTransferTokens(tokensToSwap, 0, path, address(this), block.timestamp);
+            }
+            received = _baseBalance() - beforeBal;
+        }
+        if (received > 0) {
+            uint256 marketingAmt = received * marketingTokens / tokensToSwap;
+            uint256 lpAmt = received - marketingAmt;
+            _sendBase(marketingWallet, marketingAmt);
+            if (lpAmt > 0 && lpTokenHalf > 0) {
+                _approve(address(this), address(router), lpTokenHalf);
+                if (mintMode == MintMode.BNB) router.addLiquidityETH{value: lpAmt}(address(this), lpTokenHalf, 0, 0, owner(), block.timestamp);
+                else {
+                    IERC20(usdtAddress).forceApprove(address(router), lpAmt);
+                    router.addLiquidity(address(this), usdtAddress, lpTokenHalf, lpAmt, 0, 0, owner(), block.timestamp);
+                }
+            }
+        }
+        emit SwapBack(tokenAmount, received);
+    }
+
+    function forceSwapBack() external onlyOwner { _swapBack(pendingTaxTokens); }
+`;
+
+const LITE_TAX_DISABLED_BLOCK = String.raw`    function _update(address from, address to, uint256 amount) internal override {
+        if (from == address(0) || to == address(0)) { super._update(from, to, amount); return; }
+        uint256 grossAmount = amount;
+        if (!tradingOpen && launchMode == LaunchMode.TIME && launchTime > 0 && block.timestamp >= launchTime) {
+            tradingOpen = true;
+            emit TradingOpened(block.timestamp);
+        }
+        bool exemptLimit = isExcludedFromLimits[from] || isExcludedFromLimits[to];
+        bool preLaunchBuy = !tradingOpen && from == pair && preLaunchBuyWhitelistEnabled && preLaunchBuyWhitelist[to];
+        if (!tradingOpen && !exemptLimit && !preLaunchBuy) revert("trading not open");
+        if (from == pair && buyWhitelistEnabled && !preLaunchBuy) require(buyWhitelist[to], "buy whitelist");
+        if (buyLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtAmount[to] += amount; require(boughtAmount[to] <= maxBuyAmountPerWallet, "buy limit"); }
+        if (buyAmountLimitEnabled && from == pair && !isExcludedFromLimits[to]) { boughtBaseAmount[to] += _baseAmountForBuy(grossAmount); require(boughtBaseAmount[to] <= maxBuyBaseAmountPerWallet, "buy amount limit"); }
+        super._update(from, to, amount);
+    }
+
+    function _baseAmountForBuy(uint256 tokenAmountOut) internal view returns (uint256) {
+        IPancakePairV2Lite mainPair = IPancakePairV2Lite(pair);
+        (uint112 reserve0, uint112 reserve1,) = mainPair.getReserves();
+        bool tokenIs0 = mainPair.token0() == address(this);
+        uint256 reserveOut = tokenIs0 ? uint256(reserve0) : uint256(reserve1);
+        uint256 reserveIn = tokenIs0 ? uint256(reserve1) : uint256(reserve0);
+        require(tokenAmountOut > 0 && tokenAmountOut < reserveOut, "bad buy amount");
+        return reserveIn * tokenAmountOut * 10000 / ((reserveOut - tokenAmountOut) * 9975) + 1;
+    }
+
+    function _baseBalance() internal view returns (uint256) { return mintMode == MintMode.BNB ? address(this).balance : IERC20(usdtAddress).balanceOf(address(this)); }
+    function _sendBase(address to, uint256 amount) internal { if (amount == 0) return; if (mintMode == MintMode.BNB) payable(to).transfer(amount); else IERC20(usdtAddress).safeTransfer(to, amount); }
+    function _swapBack(uint256) internal pure {}
+    function forceSwapBack() external pure {}
+`;
+
+function assembleLiteContractSource(modules = selectedModuleConfig()) {
+  let source = LITE_CONTRACT_SOURCE;
+  if (!modules.mint) {
+    source = replaceRequired(source, LITE_MINT_BLOCK, LITE_MINT_DISABLED_BLOCK, "lite-mint");
+  }
+  if (!modules.tax) {
+    source = replaceRequired(source, LITE_TAX_BLOCK, LITE_TAX_DISABLED_BLOCK, "lite-tax");
+  }
+  return source;
+}
+
+function assembleTokenContractSource({ modules = selectedModuleConfig(), dividendMode = selectedDividendMode() } = {}) {
+  const needsFullSource = modules.dividend || modules.lpDividend;
+  const source = needsFullSource ? CONTRACT_SOURCE : assembleLiteContractSource(modules);
+  const sourceKind = needsFullSource
+    ? (modules.lpDividend ? "full-lpdiv" : `full-${dividendMode}`)
+    : "lite-core";
+  return {
+    source,
+    sourceKind,
+    moduleKey: moduleVariantKey(modules)
+  };
+}
+
 function selectedSourceKind() {
-  const features = selectedFeatureSet();
-  return features.has("dividend") || features.has("lpDividend") ? "full" : "lite";
+  return assembleTokenContractSource().sourceKind;
 }
 
 function applyTemplatePreset(template = selectedTemplateVersion()) {
   const preset = FEATURE_PRESETS[template] || FEATURE_PRESETS.mintTax;
+  setFeatureToggle("featureMint", preset.mint);
   setFeatureToggle("featureTax", preset.tax);
   setFeatureToggle("featureDividend", preset.dividend);
   setFeatureToggle("featureLPDividend", preset.lpDividend);
@@ -1693,14 +1996,12 @@ function applyTemplatePreset(template = selectedTemplateVersion()) {
 }
 
 function templateContractSource(template = selectedTemplateVersion()) {
-  const templateKey = String(template || selectedTemplateVersion()).split(":")[0];
-  const key = TEMPLATE_SOURCE_BINDINGS[templateKey] || templateKey || selectedSourceKind();
-  if (String(key).startsWith("lite")) return LITE_CONTRACT_SOURCE;
-  return CONTRACT_SOURCE;
+  return assembleTokenContractSource().source;
 }
 
 function templateSourceVariant(template = selectedTemplateVersion(), dividendMode = selectedDividendMode()) {
-  return `${selectedSourceKind()}:${dividendMode}`;
+  const assembled = assembleTokenContractSource({ modules: selectedModuleConfig(), dividendMode });
+  return `${assembled.sourceKind}:${assembled.moduleKey}:${dividendMode}`;
 }
 
 function formField(name) {
@@ -1718,16 +2019,24 @@ function selectedDividendMode() {
 function renderFeatureSummary() {
   const modules = selectedModuleConfig();
   const parts = [];
+  if (modules.mint) parts.push("Mint 发射");
   if (modules.tax) parts.push("税率/税收");
   if (modules.dividend) parts.push("持币分红");
   if (modules.lpDividend) parts.push("LP 分红");
   if (modules.limits) parts.push("限购/白名单");
   const summary = $("featureSummary");
   if (!summary) return;
-  const sourceKind = selectedSourceKind() === "full" ? "完整版源码" : "轻量源码";
+  const assembled = assembleTokenContractSource({ modules });
+  const sourceKindLabel = assembled.sourceKind.startsWith("lite") ? "轻量源码" : "完整版源码";
+  const pendingNotes = [];
+  if (modules.dividend && !modules.lpDividend) pendingNotes.push("持币分红暂时仍走完整版");
+  if (modules.lpDividend) pendingNotes.push("LP 分红暂时仍走完整版");
+  if (modules.limits && modules.dividend) pendingNotes.push("限购 + 分红 的真正源码拆分还在继续");
+  const mintNote = modules.mint ? "" : " Mint 已关闭，总代币将直接发到部署钱包，由部署钱包自行加池。";
+  const moduleNote = pendingNotes.length ? ` ${pendingNotes.join("；")}。` : "";
   summary.textContent = parts.length
-    ? `当前启用：${parts.join("、")}；编译将使用${sourceKind}。`
-    : `当前仅保留基础 Mint / 开盘能力；编译将使用${sourceKind}。`;
+    ? `当前启用：${parts.join("、")}；编译将使用${sourceKindLabel}。${mintNote}${moduleNote}`
+    : `当前仅保留基础开盘能力；编译将使用${sourceKindLabel}。${mintNote}${moduleNote}`;
 }
 
 function setSelectOptionEnabled(fieldName, optionValue, enabled) {
@@ -1834,19 +2143,31 @@ function syncDividendModeUI() {
 }
 
 function applyFeatureSelection() {
+  const mintField = formField("featureMint");
   const taxField = formField("featureTax");
   const dividendField = formField("featureDividend");
   const lpDividendField = formField("featureLPDividend");
   const limitsField = formField("featureLimits");
-  if (!taxField || !dividendField || !lpDividendField || !limitsField) return;
+  if (!mintField || !taxField || !dividendField || !lpDividendField || !limitsField) return;
 
   if (lpDividendField.checked) dividendField.checked = true;
   if (!dividendField.checked) lpDividendField.checked = false;
 
   const features = selectedFeatureSet();
+  const showMint = features.has("mint");
   const showDividend = features.has("dividend");
   const showLPDividend = features.has("lpDividend");
   const showLimits = features.has("limits");
+
+  if (!showMint) {
+    if (formField("launchMode")?.value === "2") formField("launchMode").value = "0";
+    if (formField("mintPrice")) formField("mintPrice").value = "0";
+    if (formField("tokenPerMint")) formField("tokenPerMint").value = "0";
+    if (formField("maxMintCount")) formField("maxMintCount").value = "0";
+    if (formField("userMintShare")) formField("userMintShare").value = "0";
+    if (formField("userMintAmount")) formField("userMintAmount").value = "0";
+    if (formField("lpFundShare")) formField("lpFundShare").value = "0";
+  }
 
   if (!features.has("tax")) {
     if (formField("buyTax")) formField("buyTax").value = "0";
@@ -1882,6 +2203,8 @@ function applyFeatureSelection() {
   }
 
   renderFeatureSummary();
+  updateUserMintModeUI();
+  updateDeployHints();
   syncTaxShareControls();
   syncDeployLimitModeUI();
   syncAdminLimitModeUI();
@@ -1993,6 +2316,18 @@ function applyTemplateVisibility(template, mode = "deploy") {
   }
   if (mintButton && mode !== "admin") {
     mintButton.classList.toggle("template-hidden", !featureSet.has("mint"));
+  }
+  if (mode !== "admin") {
+    const mintTab = document.querySelector('.tab[data-tab="mint"]');
+    const mintPanel = $("mint");
+    const showMintPanel = featureSet.has("mint") || featureSet.has("dividend") || featureSet.has("lpDividend");
+    mintTab?.classList.toggle("template-hidden", !showMintPanel);
+    mintPanel?.classList.toggle("template-hidden", !showMintPanel);
+    if (!showMintPanel && mintPanel?.classList.contains("active")) {
+      document.querySelectorAll(".tab,.panel").forEach((el) => el.classList.remove("active"));
+      document.querySelector('.tab[data-tab="deploy"]')?.classList.add("active");
+      $("deploy")?.classList.add("active");
+    }
   }
 }
 
@@ -2512,6 +2847,7 @@ async function fetchSource(path, sources, seen, sourceVariant = "full") {
 async function compileContract() {
   log("开始准备编译依赖...");
   const dividendMode = selectedDividendMode();
+  const assembled = assembleTokenContractSource({ modules: selectedModuleConfig(), dividendMode });
   const sourceVariant = templateSourceVariant(selectedTemplateVersion(), dividendMode);
   const sources = {};
   await fetchSource("FairMintTokenV1.sol", sources, new Set(), sourceVariant);
@@ -2539,6 +2875,8 @@ async function compileContract() {
   state.compiled = {
     sourceVariant,
     dividendMode,
+    sourceKind: assembled.sourceKind,
+    moduleKey: assembled.moduleKey,
     distributorDeployEnabled: dividendMode === "external",
     abi: contract.abi,
     bytecode: creationBytecode,
@@ -2551,6 +2889,7 @@ async function compileContract() {
     factoryBytecode: "0x" + factory.evm.bytecode.object,
     standardJsonInput: input
   };
+  log(`源码组装：${assembled.sourceKind} / ${assembled.moduleKey}`);
   log(`编译完成，ABI ${contract.abi.length} 项，构造参数 ${compiledConstructorTypes().length} 项。`);
   log(`合约大小：创建字节码 ${creationByteSize} bytes / 运行时代码 ${runtimeByteSize} bytes`);
   if (creationByteSize > EVM_MAX_INIT_CODE_SIZE) {
@@ -2584,8 +2923,9 @@ function deployArgs(form) {
     percentToBp(fd.get("userMintShare")),
     parseToken(fd.get("userMintAmount")),
     percentToBp(fd.get("lpFundShare")),
-    Number(fd.get("launchMode")),
+    modules.mint ? Number(fd.get("launchMode")) : 0,
     BigInt(launchTime),
+    modules.mint,
     fd.get("marketingWallet") || state.account,
     state.account,
     modules.dividend ? (fd.get("rewardToken") || ZERO) : ZERO,
@@ -3088,7 +3428,7 @@ $("loadAdmin").addEventListener("click", async (e) => run(e.currentTarget, async
 $("refreshAdmin").addEventListener("click", async (e) => run(e.currentTarget, refreshAdmin));
 document.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", async () => run(btn, () => adminAction(btn.dataset.action))));
 formField("templateVersion")?.addEventListener("change", (e) => applyTemplateSelection(e.target.value));
-["featureTax", "featureDividend", "featureLPDividend", "featureLimits"].forEach((name) => {
+["featureMint", "featureTax", "featureDividend", "featureLPDividend", "featureLimits"].forEach((name) => {
   formField(name)?.addEventListener("change", applyFeatureSelection);
 });
 formField("dividendMode")?.addEventListener("change", () => {
