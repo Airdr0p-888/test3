@@ -478,6 +478,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         require(buyTax_ <= MAX_TAX && transferTax_ <= MAX_TAX, "buy/transfer tax > 5%");
         require(sellTax_ <= MAX_SELL_TAX, "sell tax > 100%");
         require(marketingShare_ + burnShare_ + lpShare_ + dividendShare_ == DENOMINATOR, "sum != 10000");
+        require(!(buyLimitEnabled_ && buyAmountLimitEnabled_), "choose one limit");
         if (buyLimitEnabled_) require(maxBuyAmountPerWallet_ > 0, "buy limit zero");
         if (buyAmountLimitEnabled_) require(maxBuyBaseAmountPerWallet_ > 0, "buy amount limit zero");
         if (mintMode_ == MintMode.USDT) require(usdtAddress_ != address(0), "usdt zero");
@@ -763,9 +764,9 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function setWhitelist(address user, bool v) external onlyOwner { whitelist[user] = v; }
     function batchSetWhitelist(address[] calldata users, bool v) external onlyOwner { for (uint i; i < users.length; i++) whitelist[users[i]] = v; }
     function setExcludedFromFee(address user, bool v) external onlyOwner { require(!feeExemptionsLocked, "fee exemptions locked"); isExcludedFromFee[user] = v; }
-    function setBuyLimitEnabled(bool v) external onlyOwner { buyLimitEnabled = v; }
+    function setBuyLimitEnabled(bool v) external onlyOwner { if (v) { require(maxBuyAmountPerWallet > 0, "buy limit zero"); buyAmountLimitEnabled = false; } buyLimitEnabled = v; }
     function setMaxBuyAmountPerWallet(uint256 v) external onlyOwner { maxBuyAmountPerWallet = v; }
-    function setBuyAmountLimitEnabled(bool v) external onlyOwner { if (v) require(maxBuyBaseAmountPerWallet > 0, "buy amount limit zero"); buyAmountLimitEnabled = v; }
+    function setBuyAmountLimitEnabled(bool v) external onlyOwner { if (v) { require(maxBuyBaseAmountPerWallet > 0, "buy amount limit zero"); buyLimitEnabled = false; } buyAmountLimitEnabled = v; }
     function setMaxBuyBaseAmountPerWallet(uint256 v) external onlyOwner { maxBuyBaseAmountPerWallet = v; }
     function setBuyWhitelistEnabled(bool v) external onlyOwner { buyWhitelistEnabled = v; }
     function setBuyWhitelist(address user, bool v) external onlyOwner { require(user != address(0), "zero address"); buyWhitelist[user] = v; }
@@ -1020,6 +1021,8 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         burnShare = burnShare_;
         lpShare = lpShare_;
         dividendShare = dividendShare_;
+        if (buyLimitEnabled_) buyAmountLimitEnabled_ = false;
+        if (buyAmountLimitEnabled_) buyLimitEnabled_ = false;
         buyLimitEnabled = buyLimitEnabled_;
         maxBuyAmountPerWallet = maxBuyAmountPerWallet_;
         buyAmountLimitEnabled = buyAmountLimitEnabled_;
@@ -1203,9 +1206,9 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function setWhitelist(address user, bool v) external onlyOwner { whitelist[user] = v; }
     function batchSetWhitelist(address[] calldata users, bool v) external onlyOwner { for (uint256 i; i < users.length; i++) whitelist[users[i]] = v; }
     function setExcludedFromFee(address user, bool v) external onlyOwner { require(!feeExemptionsLocked, "fee exemptions locked"); isExcludedFromFee[user] = v; }
-    function setBuyLimitEnabled(bool v) external onlyOwner { buyLimitEnabled = v; }
+    function setBuyLimitEnabled(bool v) external onlyOwner { if (v) buyAmountLimitEnabled = false; buyLimitEnabled = v; }
     function setMaxBuyAmountPerWallet(uint256 v) external onlyOwner { maxBuyAmountPerWallet = v; }
-    function setBuyAmountLimitEnabled(bool v) external onlyOwner { buyAmountLimitEnabled = v; }
+    function setBuyAmountLimitEnabled(bool v) external onlyOwner { if (v) buyLimitEnabled = false; buyAmountLimitEnabled = v; }
     function setMaxBuyBaseAmountPerWallet(uint256 v) external onlyOwner { maxBuyBaseAmountPerWallet = v; }
     function setBuyWhitelistEnabled(bool v) external onlyOwner { buyWhitelistEnabled = v; }
     function setBuyWhitelist(address, bool) external pure {}
@@ -1355,7 +1358,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "只保留 Mint / 开盘 / 提币等基础操作。"],
       ["链上风格", "体积最轻，部署和验证最省心。"] 
     ],
-    features: ["launch"]
+    features: ["mint", "tax", "dividend", "launch"]
   },
   mint: {
     title: "Mint 专用版",
@@ -1366,7 +1369,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "Mint 参数、开盘、加池、提 LP。"],
       ["链上风格", "比综合版更轻，适合做干净首发。"] 
     ],
-    features: ["mint", "launch"]
+    features: ["mint", "tax", "dividend", "launch"]
   },
   tax: {
     title: "标准税收版",
@@ -1377,7 +1380,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "税率、营销钱包、SwapBack、加池。"],
       ["链上风格", "比高级限制版更轻，更适合长期维护。"] 
     ],
-    features: ["tax", "launch"]
+    features: ["mint", "tax", "dividend", "launch"]
   },
   mintTax: {
     title: "Mint + 税收版",
@@ -1388,7 +1391,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "Mint 参数、税率、营销钱包、SwapBack。"],
       ["链上风格", "兼顾首发和后续运营，功能与体积较平衡。"] 
     ],
-    features: ["mint", "tax", "launch"]
+    features: ["mint", "tax", "dividend", "launch"]
   },
   dividendInternal: {
     title: "内置分红版",
@@ -1443,7 +1446,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "开盘、税率、营销、加池和 LP 提取。"],
       ["链上风格", "适合 meme / 社区币常规上池流程。"] 
     ],
-    features: ["tax", "launch"]
+    features: ["mint", "tax", "dividend", "launch"]
   }
 };
 
@@ -1618,8 +1621,27 @@ function templateRecommendationConfig(template) {
   return TEMPLATE_RECOMMENDATIONS[template] || TEMPLATE_RECOMMENDATIONS.mintTax;
 }
 
-function templateSourceVariant(template = selectedTemplateVersion()) {
-  return ["dividendInternal", "dividendExternal", "lpDividend", "advanced"].includes(template) ? "full" : "lite";
+const TEMPLATE_SOURCE_BINDINGS = {
+  light: "light",
+  mint: "mint",
+  tax: "tax",
+  mintTax: "mintTax",
+  trade: "trade",
+  dividendInternal: "dividendInternal",
+  dividendExternal: "dividendExternal",
+  lpDividend: "lpDividend",
+  advanced: "advanced"
+};
+
+function templateContractSource(template = selectedTemplateVersion()) {
+  const templateKey = String(template || selectedTemplateVersion()).split(":")[0];
+  const key = TEMPLATE_SOURCE_BINDINGS[templateKey] || templateKey || "mintTax";
+  if (["light", "mint", "tax", "mintTax", "trade", "dividendInternal", "dividendExternal", "lpDividend", "advanced"].includes(key)) return CONTRACT_SOURCE;
+  return CONTRACT_SOURCE;
+}
+
+function templateSourceVariant(template = selectedTemplateVersion(), dividendMode = selectedDividendMode()) {
+  return `${TEMPLATE_SOURCE_BINDINGS[template] || "mintTax"}:${dividendMode}`;
 }
 
 function formField(name) {
@@ -1628,6 +1650,113 @@ function formField(name) {
 
 function selectedTemplateVersion() {
   return formField("templateVersion")?.value || "mintTax";
+}
+
+function selectedDividendMode() {
+  return formField("dividendMode")?.value === "external" ? "external" : "internal";
+}
+
+function setSelectOptionEnabled(fieldName, optionValue, enabled) {
+  const field = formField(fieldName);
+  if (!(field instanceof HTMLSelectElement)) return;
+  const option = [...field.options].find((item) => item.value === String(optionValue));
+  if (option) option.disabled = !enabled;
+}
+
+function setFieldDisabled(fieldName, disabled) {
+  const field = formField(fieldName);
+  if (field) field.disabled = !!disabled;
+}
+
+function ensureHintNode(id, parentSelector) {
+  let node = $(id);
+  if (node) return node;
+  const parent = document.querySelector(parentSelector);
+  if (!parent) return null;
+  node = document.createElement("p");
+  node.id = id;
+  node.className = "template-summary";
+  parent.appendChild(node);
+  return node;
+}
+
+function syncDeployLimitModeUI(preferredMode = "") {
+  const tokenLimitToggle = formField("buyLimitEnabled");
+  const tokenLimitInput = formField("maxBuyAmountPerWallet");
+  const amountLimitToggle = formField("buyAmountLimitEnabled");
+  const amountLimitInput = formField("maxBuyBaseAmountPerWallet");
+  if (!tokenLimitToggle || !amountLimitToggle) return;
+
+  const tokenEnabled = parseBool(tokenLimitToggle.value);
+  const amountEnabled = parseBool(amountLimitToggle.value);
+
+  if (tokenEnabled && amountEnabled) {
+    if (preferredMode === "amount") tokenLimitToggle.value = "false";
+    else amountLimitToggle.value = "false";
+  }
+
+  const finalTokenEnabled = parseBool(tokenLimitToggle.value);
+  const finalAmountEnabled = parseBool(amountLimitToggle.value);
+
+  if (tokenLimitInput) tokenLimitInput.disabled = !finalTokenEnabled;
+  if (amountLimitInput) amountLimitInput.disabled = !finalAmountEnabled;
+
+  const hint = ensureHintNode("deployLimitModeHint", "#limitsSection");
+  if (hint) {
+    hint.textContent = finalTokenEnabled
+      ? "当前使用代币数量限购，金额限购已关闭。"
+      : finalAmountEnabled
+        ? "当前使用金额限购，代币数量限购已关闭。"
+        : "买入限购和金额限购二选一，也可以都关闭。";
+  }
+}
+
+function syncAdminLimitModeUI(preferredMode = "") {
+  const tokenLimitToggle = $("buyLimitEnabled");
+  const tokenLimitInput = $("maxBuyAmountPerWallet");
+  const amountLimitToggle = $("buyAmountLimitEnabled");
+  const amountLimitInput = $("maxBuyBaseAmountPerWallet");
+  if (!tokenLimitToggle || !amountLimitToggle) return;
+
+  const tokenEnabled = parseBool(tokenLimitToggle.value);
+  const amountEnabled = parseBool(amountLimitToggle.value);
+
+  if (tokenEnabled && amountEnabled) {
+    if (preferredMode === "amount") tokenLimitToggle.value = "false";
+    else amountLimitToggle.value = "false";
+  }
+
+  const finalTokenEnabled = parseBool(tokenLimitToggle.value);
+  const finalAmountEnabled = parseBool(amountLimitToggle.value);
+
+  if (tokenLimitInput) tokenLimitInput.disabled = !finalTokenEnabled;
+  if (amountLimitInput) amountLimitInput.disabled = !finalAmountEnabled;
+
+  const hint = ensureHintNode("adminLimitModeHint", 'article[data-template-feature="limits"]');
+  if (hint) {
+    hint.textContent = finalTokenEnabled
+      ? "当前后台启用的是代币数量限购。"
+      : finalAmountEnabled
+        ? "当前后台启用的是金额限购。"
+        : "当前后台未启用买入限购。";
+  }
+}
+
+function syncDividendModeUI() {
+  const dividendMode = formField("dividendMode");
+  const dividendOwner = formField("dividendOwner");
+  if (!dividendMode) return;
+  const external = dividendMode.value === "external";
+  if (dividendOwner) {
+    dividendOwner.disabled = !external;
+    if (!external) dividendOwner.value = "";
+  }
+  const hint = ensureHintNode("dividendModeHint", "#taxShareSection");
+  if (hint) {
+    hint.textContent = external
+      ? "当前使用独立分红合约模式，部署时会额外部署 distributor。"
+      : "当前使用内置分红模式，不会额外部署独立分红合约。";
+  }
 }
 
 function templateStorageKey(address) {
@@ -1681,13 +1810,20 @@ function setTemplateDrivenDefaults(template) {
   const config = templateConfig(template);
   const dividendMode = formField("dividendMode");
   const dividendTargetMode = formField("dividendTargetMode");
+  const supportsDividend = config.features.includes("dividend") || config.features.includes("lpDividend");
+  const supportsExternalDividend = supportsDividend;
   if (dividendMode) {
-    if (template === "dividendExternal") dividendMode.value = "external";
-    else if (["dividendInternal", "lpDividend", "advanced"].includes(template)) dividendMode.value = "internal";
+    setSelectOptionEnabled("dividendMode", "external", supportsExternalDividend);
+    if (!supportsDividend) dividendMode.value = "internal";
+    else if (template === "dividendExternal") dividendMode.value = "external";
+    else if (!supportsExternalDividend && dividendMode.value === "external") dividendMode.value = "internal";
   }
   if (dividendTargetMode) {
-    dividendTargetMode.value = template === "lpDividend" ? "1" : "0";
+    if (!supportsDividend) dividendTargetMode.value = "0";
+    else if (template === "lpDividend") dividendTargetMode.value = "1";
   }
+  setFieldDisabled("dividendMode", !supportsDividend);
+  setFieldDisabled("dividendTargetMode", !supportsDividend);
   const buyTax = formField("buyTax");
   const sellTax = formField("sellTax");
   const transferTax = formField("transferTax");
@@ -1735,6 +1871,18 @@ function applyTemplateSelection(template = selectedTemplateVersion()) {
   setTemplateDrivenDefaults(template);
   applyTemplateVisibility(template, "deploy");
   applyTemplateVisibility(template, "admin");
+  syncDeployLimitModeUI();
+  syncAdminLimitModeUI();
+  syncDividendModeUI();
+  const hint = $("templateAdminHint");
+  if (hint) {
+    const supportsExternalDividend = templateConfig(template).features.some((feature) => feature === "dividend" || feature === "lpDividend");
+    const supportsDividend = templateConfig(template).features.some((feature) => feature === "dividend" || feature === "lpDividend");
+    const extras = [];
+    if (!supportsDividend) extras.push("当前模板不包含分红功能，分红相关配置已禁用。");
+    else if (!supportsExternalDividend) extras.push("当前模板不支持独立分红合约，已禁用该选项。");
+    if (extras.length) hint.textContent = `${hint.textContent} ${extras.join(" ")}`;
+  }
 }
 
 function applyTemplateForAddress(address) {
@@ -2046,6 +2194,7 @@ function readDeployLimitConfig(form) {
     whitelistEnabled: parseBool(form.elements.buyWhitelistEnabled.value),
     preLaunchWhitelistEnabled: parseBool(form.elements.preLaunchBuyWhitelistEnabled.value)
   };
+  if (config.enabled && config.amountEnabled) throw new Error("买入限购和金额限购只能二选一，不能同时开启。");
   if (config.enabled && config.maxAmount == 0n) throw new Error("开启限购时，单钱包累计限购代币数必须大于 0。");
   if (config.amountEnabled && config.maxBaseAmount == 0n) throw new Error("开启金额限购时，单钱包累计限购金额必须大于 0。");
   return config;
@@ -2198,7 +2347,7 @@ async function fetchSource(path, sources, seen, sourceVariant = "full") {
   if (seen.has(path)) return;
   seen.add(path);
   let content;
-  if (path === "FairMintTokenV1.sol") content = sourceVariant === "lite" ? LITE_CONTRACT_SOURCE : CONTRACT_SOURCE;
+  if (path === "FairMintTokenV1.sol") content = templateContractSource(sourceVariant);
   else if (path === "Create2Factory.sol") content = FACTORY_SOURCE;
   else {
     const url = OPENZEPPELIN_BASE + path.replace("@openzeppelin/contracts/", "");
@@ -2213,7 +2362,8 @@ async function fetchSource(path, sources, seen, sourceVariant = "full") {
 
 async function compileContract() {
   log("开始准备编译依赖...");
-  const sourceVariant = templateSourceVariant();
+  const dividendMode = selectedDividendMode();
+  const sourceVariant = templateSourceVariant(selectedTemplateVersion(), dividendMode);
   const sources = {};
   await fetchSource("FairMintTokenV1.sol", sources, new Set(), sourceVariant);
   await fetchSource("Create2Factory.sol", sources, new Set(), sourceVariant);
@@ -2235,6 +2385,8 @@ async function compileContract() {
   const factory = output.contracts["Create2Factory.sol"].Create2Factory;
   state.compiled = {
     sourceVariant,
+    dividendMode,
+    distributorDeployEnabled: dividendMode === "external",
     abi: contract.abi,
     bytecode: "0x" + contract.evm.bytecode.object,
     distributorAbi: distributor?.abi || null,
@@ -2311,7 +2463,7 @@ async function deployContract(form) {
   applyNetworkDefaults();
   const args = deployArgs(form);
   const dividendMode = readDividendMode(form);
-  if (dividendMode.external && !state.compiled.distributorAbi) {
+  if (dividendMode.external && !state.compiled.distributorDeployEnabled) {
     throw new Error("当前模板未包含独立分红合约，请切换到独立分红版、内置分红版或高级限制版后重新编译。");
   }
   const constructorTypes = compiledConstructorTypes();
@@ -2624,6 +2776,7 @@ async function refreshAdmin() {
     ["税锁定", taxesLocked ? "已锁定" : "未锁定"], ["免税锁定", feeExemptionsLocked ? "已锁定" : "未锁定"],
     ["暂停权限", pauseDisabledForever ? "永久禁用" : (tradingOpen ? "交易已开，不能暂停" : "可暂停")]
   ]);
+  syncAdminLimitModeUI();
 }
 
 function renderStats(id, items) {
@@ -2759,7 +2912,18 @@ $("loadAdmin").addEventListener("click", async (e) => run(e.currentTarget, async
 $("refreshAdmin").addEventListener("click", async (e) => run(e.currentTarget, refreshAdmin));
 document.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", async () => run(btn, () => adminAction(btn.dataset.action))));
 formField("templateVersion")?.addEventListener("change", (e) => applyTemplateSelection(e.target.value));
+formField("dividendMode")?.addEventListener("change", () => {
+  syncDividendModeUI();
+  applyTemplateSelection(selectedTemplateVersion());
+});
+formField("buyLimitEnabled")?.addEventListener("change", () => syncDeployLimitModeUI("token"));
+formField("buyAmountLimitEnabled")?.addEventListener("change", () => syncDeployLimitModeUI("amount"));
+$("buyLimitEnabled")?.addEventListener("change", () => syncAdminLimitModeUI("token"));
+$("buyAmountLimitEnabled")?.addEventListener("change", () => syncAdminLimitModeUI("amount"));
 applyTemplateSelection(selectedTemplateVersion());
+syncDividendModeUI();
+syncDeployLimitModeUI();
+syncAdminLimitModeUI();
 
 ["totalSupply", "tokenPerMint", "maxMintCount", "mintPrice", "userMintShare", "userMintAmount", "lpFundShare"].forEach((name) => {
   const field = formField(name);
