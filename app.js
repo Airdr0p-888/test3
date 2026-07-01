@@ -428,6 +428,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     uint256 public burnShare;
     uint256 public lpShare;
     uint256 public dividendShare;
+    uint8 public dividendTargetMode;
     address public marketingWallet;
     address public rewardToken;
     address public deadWallet;
@@ -466,7 +467,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     event DividendClaimed(address indexed user, uint256 tokenReward, uint256 lpReward);
     event AutoDividendProcessed(uint256 processed, uint256 paid);
     modifier lockSwap() { inSwap = true; _; inSwap = false; }
-    constructor(string memory name_, string memory symbol_, uint256 totalSupply_, MintMode mintMode_, address usdtAddress_, address router_, uint256 mintPrice_, uint256 tokenPerMint_, uint256 maxMintCount_, UserMintMode userMintMode_, uint256 userMintShare_, uint256 userMintAmount_, uint256 lpFundShare_, LaunchMode launchMode_, uint256 launchTime_, address marketingWallet_, address owner_, address rewardToken_, uint256 buyTax_, uint256 sellTax_, uint256 transferTax_, uint256 marketingShare_, uint256 burnShare_, uint256 lpShare_, uint256 dividendShare_, bool buyLimitEnabled_, uint256 maxBuyAmountPerWallet_, uint256 minTokenDividendBalance_, bool buyAmountLimitEnabled_, uint256 maxBuyBaseAmountPerWallet_, bool buyWhitelistEnabled_, bool preLaunchBuyWhitelistEnabled_) ERC20(name_, symbol_) Ownable(owner_) {
+    constructor(string memory name_, string memory symbol_, uint256 totalSupply_, MintMode mintMode_, address usdtAddress_, address router_, uint256 mintPrice_, uint256 tokenPerMint_, uint256 maxMintCount_, UserMintMode userMintMode_, uint256 userMintShare_, uint256 userMintAmount_, uint256 lpFundShare_, LaunchMode launchMode_, uint256 launchTime_, address marketingWallet_, address owner_, address rewardToken_, uint8 dividendTargetMode_, uint256 buyTax_, uint256 sellTax_, uint256 transferTax_, uint256 marketingShare_, uint256 burnShare_, uint256 lpShare_, uint256 dividendShare_, bool buyLimitEnabled_, uint256 maxBuyAmountPerWallet_, uint256 minTokenDividendBalance_, bool buyAmountLimitEnabled_, uint256 maxBuyBaseAmountPerWallet_, bool buyWhitelistEnabled_, bool preLaunchBuyWhitelistEnabled_) ERC20(name_, symbol_) Ownable(owner_) {
         require(totalSupply_ > 0, "totalSupply zero");
         require(router_ != address(0), "router zero");
         require(marketingWallet_ != address(0), "marketing zero");
@@ -632,7 +633,8 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
             uint256 dividendAmt = received * dividendTokens / tokensToSwap;
             uint256 lpAmt = received - marketingAmt - dividendAmt;
             _sendBase(marketingWallet, marketingAmt);
-            _fundTokenDividendFromSwap(dividendAmt);
+            if (dividendTargetMode == 1) _fundLPDividendFromSwap(dividendAmt);
+            else _fundTokenDividendFromSwap(dividendAmt);
             if (lpAmt > 0 && lpTokenHalf > 0) { _approve(address(this), address(router), lpTokenHalf); if (mintMode == MintMode.BNB) router.addLiquidityETH{value: lpAmt}(address(this), lpTokenHalf, 0, 0, owner(), block.timestamp); else { IERC20(usdtAddress).forceApprove(address(router), lpAmt); router.addLiquidity(address(this), usdtAddress, lpTokenHalf, lpAmt, 0, 0, owner(), block.timestamp); } }
             if (_useExternalDistributor()) _distributor().processAutoDividends(autoDividendBatchSize);
             else if (autoDividendEnabled) _processAutoDividends(autoDividendBatchSize);
@@ -683,6 +685,18 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
             return;
         }
         uint256 circulating = eligibleTokenDividendSupply(); if (circulating == 0) { _sendReward(marketingWallet, rewardAmount); return; } dividendReserve += rewardAmount; tokenDividendPerShare += rewardAmount * ACC / circulating; emit TokenDividendFunded(rewardAmount); _kickAutoDividends();
+    }
+    function _fundLPDividendFromSwap(uint256 baseAmount) internal {
+        if (baseAmount == 0) return;
+        uint256 rewardAmount = _isNativeReward() ? baseAmount : _convertBaseToReward(baseAmount);
+        if (_useExternalDistributor()) {
+            if (rewardAmount == 0) return;
+            if (_isNativeReward()) _distributor().notifyLPDividendNative{value: rewardAmount}();
+            else { IERC20(rewardTokenAddress()).safeTransfer(dividendDistributor, rewardAmount); (bool ok,) = dividendDistributor.call(abi.encodeWithSignature("notifyLPDividendToken(uint256)", rewardAmount)); require(ok, "external lp dividend failed"); }
+            _kickAutoDividends();
+            return;
+        }
+        uint256 lpSupply = eligibleLPDividendSupply(); if (lpSupply == 0) { _sendReward(marketingWallet, rewardAmount); return; } dividendReserve += rewardAmount; lpDividendPerShare += rewardAmount * ACC / lpSupply; emit LPDividendFunded(rewardAmount); _kickAutoDividends();
     }
     function fundTokenDividendBNB() external payable onlyOwner { require(_isNativeReward(), "not native reward"); if (_useExternalDistributor()) _distributor().notifyTokenDividendNative{value: msg.value}(); else _fundTokenDividendManual(msg.value); _kickAutoDividends(); }
     function fundTokenDividendToken(uint256 amount) public onlyOwner { require(!_isNativeReward(), "native reward"); if (_useExternalDistributor()) { IERC20(rewardTokenAddress()).safeTransferFrom(msg.sender, dividendDistributor, amount); _distributor().notifyTokenDividendToken(amount); } else { IERC20(rewardTokenAddress()).safeTransferFrom(msg.sender, address(this), amount); _fundTokenDividendManual(amount); } _kickAutoDividends(); }
@@ -795,6 +809,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function setSellTax(uint256 v) external onlyOwner { require(!taxesLocked, "taxes locked"); require(v <= MAX_SELL_TAX, "sell tax > 100%"); sellTax = v; }
     function setTransferTax(uint256 v) external onlyOwner { require(!taxesLocked, "taxes locked"); require(v <= MAX_TAX, "tax > 5%"); transferTax = v; }
     function setTaxShares(uint256 marketing, uint256 burn, uint256 lp, uint256 dividend) external onlyOwner { require(!taxesLocked, "taxes locked"); require(marketing + burn + lp + dividend == DENOMINATOR, "sum != 10000"); marketingShare = marketing; burnShare = burn; lpShare = lp; dividendShare = dividend; }
+    function setDividendTargetMode(uint8 v) external onlyOwner { require(v <= 1, "bad dividend target"); dividendTargetMode = v; }
     function setMarketingShare(uint256 v) external onlyOwner { require(!taxesLocked, "taxes locked"); marketingShare = v; _checkShares(); }
     function setBurnShare(uint256 v) external onlyOwner { require(!taxesLocked, "taxes locked"); burnShare = v; _checkShares(); }
     function setLPShare(uint256 v) external onlyOwner { require(!taxesLocked, "taxes locked"); lpShare = v; _checkShares(); }
@@ -903,6 +918,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     uint256 public burnShare;
     uint256 public lpShare;
     uint256 public dividendShare;
+    uint8 public dividendTargetMode;
     address public marketingWallet;
     address public rewardToken;
     address public deadWallet;
@@ -950,6 +966,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         address marketingWallet_,
         address owner_,
         address rewardToken_,
+        uint8 dividendTargetMode_,
         uint256 buyTax_,
         uint256 sellTax_,
         uint256 transferTax_,
@@ -975,6 +992,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         require(buyTax_ <= MAX_TAX && transferTax_ <= MAX_TAX, "buy/transfer tax > 5%");
         require(sellTax_ <= MAX_SELL_TAX, "sell tax > 100%");
         require(marketingShare_ + burnShare_ + lpShare_ + dividendShare_ == DENOMINATOR, "sum != 10000");
+        require(dividendTargetMode_ <= 1, "bad dividend target");
         if (mintMode_ == MintMode.USDT) require(usdtAddress_ != address(0), "usdt zero");
         if (launchMode_ == LaunchMode.TIME) require(launchTime_ > block.timestamp, "bad launch time");
         mintMode = mintMode_;
@@ -994,6 +1012,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
         tradingStartTime = launchTime_;
         marketingWallet = marketingWallet_;
         rewardToken = rewardToken_;
+        dividendTargetMode = dividendTargetMode_;
         buyTax = buyTax_;
         sellTax = sellTax_;
         transferTax = transferTax_;
@@ -1031,6 +1050,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function minTokenDividendBalanceView() external view returns (uint256) { return minTokenDividendBalance; }
     function autoDividendEnabledView() external view returns (bool) { return autoDividendEnabled; }
     function autoDividendBatchSizeView() external view returns (uint256) { return autoDividendBatchSize; }
+    function processPendingDividends() external pure {}
     function isDividendExcluded(address) external pure returns (bool) { return false; }
     function dividendExcludedCount() external pure returns (uint256) { return 0; }
     function dividendHolderCount() external pure returns (uint256) { return 0; }
@@ -1054,6 +1074,7 @@ contract FairMintTokenV1 is ERC20, Ownable, Pausable, ReentrancyGuard {
     function fundLPDividendUSDT(uint256) external pure {}
     function withdrawDividendReserve(uint256) external pure {}
     function setRewardToken(address v) external onlyOwner { rewardToken = v; }
+    function setDividendTargetMode(uint8 v) external onlyOwner { dividendTargetMode = v; }
 
     function mintBNB() external payable nonReentrant whenNotPaused { _mintBNB(msg.sender, msg.value); }
     function _mintBNB(address user, uint256 amount) internal { require(mintMode == MintMode.BNB, "not BNB mode"); require(amount == mintPrice, "bad BNB amount"); _mintFlow(user, amount); }
@@ -1659,9 +1680,13 @@ function renderTemplateDescription(template) {
 function setTemplateDrivenDefaults(template) {
   const config = templateConfig(template);
   const dividendMode = formField("dividendMode");
+  const dividendTargetMode = formField("dividendTargetMode");
   if (dividendMode) {
     if (template === "dividendExternal") dividendMode.value = "external";
     else if (["dividendInternal", "lpDividend", "advanced"].includes(template)) dividendMode.value = "internal";
+  }
+  if (dividendTargetMode) {
+    dividendTargetMode.value = template === "lpDividend" ? "1" : "0";
   }
   const buyTax = formField("buyTax");
   const sellTax = formField("sellTax");
@@ -2248,6 +2273,7 @@ function deployArgs(form) {
     fd.get("marketingWallet") || state.account,
     state.account,
     fd.get("rewardToken") || ZERO,
+    Number(fd.get("dividendTargetMode") || 0),
     tax.buyTax,
     tax.sellTax,
     tax.transferTax,
@@ -2555,7 +2581,7 @@ async function refreshAdmin() {
   const reward = await rewardInfo(state.admin);
   const [
     owner, pair, mintMode, mintPrice, tokenPerMint, mintedCount, maxMintCount, mintEnabled, tradingOpen,
-    buyTax, sellTax, transferTax, marketingShare, burnShare, lpShare, dividendShare, marketingWallet, swapThreshold, dividendReserve,
+    buyTax, sellTax, transferTax, marketingShare, burnShare, lpShare, dividendShare, dividendTargetMode, marketingWallet, swapThreshold, dividendReserve,
     buyLimitEnabled, maxBuyAmountPerWallet, minTokenDividendBalance, autoDividendEnabled, autoDividendBatchSize, dividendHolderCount,
     buyAmountLimitEnabled, maxBuyBaseAmountPerWallet,
     buyWhitelistEnabled,
@@ -2566,7 +2592,7 @@ async function refreshAdmin() {
     state.admin.owner(), state.admin.pair(), state.admin.mintMode(), state.admin.mintPrice(), state.admin.tokenPerMint(),
     state.admin.mintedCount(), state.admin.maxMintCount(), state.admin.mintEnabled(), state.admin.tradingOpen(),
     state.admin.buyTax(), state.admin.sellTax(), state.admin.transferTax(), state.admin.marketingShare(),
-    state.admin.burnShare(), state.admin.lpShare(), state.admin.dividendShare(), state.admin.marketingWallet(), state.admin.swapThreshold(),
+    state.admin.burnShare(), state.admin.lpShare(), state.admin.dividendShare(), state.admin.dividendTargetMode().catch(() => 0), state.admin.marketingWallet(), state.admin.swapThreshold(),
     state.admin.dividendReserveView ? state.admin.dividendReserveView() : state.admin.dividendReserve(), state.admin.buyLimitEnabled(), state.admin.maxBuyAmountPerWallet(), state.admin.minTokenDividendBalanceView ? state.admin.minTokenDividendBalanceView() : state.admin.minTokenDividendBalance(),
     state.admin.autoDividendEnabledView ? state.admin.autoDividendEnabledView() : state.admin.autoDividendEnabled(), state.admin.autoDividendBatchSizeView ? state.admin.autoDividendBatchSizeView() : state.admin.autoDividendBatchSize(), state.admin.dividendHolderCount(),
     state.admin.buyAmountLimitEnabled(), state.admin.maxBuyBaseAmountPerWallet(),
@@ -2670,6 +2696,7 @@ async function adminAction(action) {
     setTaxShares: () => c.setTaxShares(BigInt($("marketingShare").value), BigInt($("burnShare").value), BigInt($("lpShare").value), BigInt($("dividendShare").value)),
     lockTaxes: () => c.lockTaxes(),
     setMarketingWallet: () => c.setMarketingWallet($("marketingWallet").value.trim()),
+    setDividendTargetMode: () => c.setDividendTargetMode(BigInt($("dividendTargetMode").value)),
     setRewardToken: () => dividendTarget.setRewardToken($("rewardTokenAdmin").value.trim() || ZERO),
     setSwapThreshold: () => c.setSwapThreshold(parseToken($("swapThreshold").value)),
     setBuyLimitEnabled: () => c.setBuyLimitEnabled(parseBool($("buyLimitEnabled").value)),
@@ -2679,6 +2706,7 @@ async function adminAction(action) {
     setMinTokenDividendBalance: () => dividendTarget.setMinTokenDividendBalance(parseToken($("minTokenDividendBalance").value)),
     setAutoDividendEnabled: () => dividendTarget.setAutoDividendEnabled(parseBool($("autoDividendEnabled").value)),
     setAutoDividendBatchSize: () => dividendTarget.setAutoDividendBatchSize(BigInt($("autoDividendBatchSize").value)),
+    processPendingDividends: () => c.processPendingDividends(),
     forceSwapBack: () => c.forceSwapBack(),
     fundTokenDividend: async () => {
       const amount = parseToken($("dividendAmount").value);

@@ -125,6 +125,7 @@
               </div>
               <div id="taxShareHint" class="form-hint ok">税收分配合计 100%</div>
               <div class="grid share-extra">
+                <label>分红去向<select name="dividendTargetMode"><option value="0">持币分红</option><option value="1">LP 分红</option></select></label>
                 <label>分红模式<select name="dividendMode"><option value="internal">内置分红</option><option value="external">独立分红合约</option></select></label>
                 <label>分红管理员钱包<input name="dividendOwner" placeholder="留空默认部署钱包" /></label>
                 <label>分红代币地址<input name="rewardToken" placeholder="留空=默认；BNB底池分USDT则填USDT地址" /></label>
@@ -263,6 +264,7 @@
               <div class="row"><input id="minTokenDividendBalance" placeholder="持币分红最低持仓" /><button data-action="setMinTokenDividendBalance">设置门槛</button></div>
               <div class="row"><select id="autoDividendEnabled"><option value="true">开启自动分红</option><option value="false">关闭自动分红</option></select><button data-action="setAutoDividendEnabled">保存</button></div>
               <div class="row"><input id="autoDividendBatchSize" placeholder="每次处理地址数，默认5" /><button data-action="setAutoDividendBatchSize">设置批次</button></div>
+              <button data-action="processPendingDividends">执行分红处理</button>
               <div class="row"><input id="dividendAmount" placeholder="分红金额" /><button data-action="fundTokenDividend">代币持有人分红</button></div>
               <div class="row"><input id="lpDividendAmount" placeholder="LP 分红金额" /><button data-action="fundLPDividend">LP 分红</button></div>
               <div class="row"><input id="liqTokenAmount" placeholder="代币数量" /><input id="liqFundAmount" placeholder="资金数量" /><button data-action="forceAddLiquidity">加池</button></div>
