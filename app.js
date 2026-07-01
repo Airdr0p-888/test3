@@ -3858,7 +3858,7 @@ async function deployContract(form) {
   $("verificationBox").hidden = false;
   $("adminContractAddress").value = address;
   $("mintContractAddress").value = address;
-  state.admin = contract;
+  state.admin = await adminContractAt(address);
   state.mint = contract;
   log(`部署完成：${address}`);
   await refreshAdmin();
@@ -4110,7 +4110,9 @@ async function mintNow() {
 
 async function adminAction(action) {
   await ensureWallet();
-  if (!state.admin) state.admin = await adminContractAt($("adminContractAddress").value.trim());
+  const adminAddress = $("adminContractAddress").value.trim();
+  if (!state.admin) state.admin = await adminContractAt(adminAddress);
+  if (typeof state.admin.mintMode !== "function") state.admin = await adminContractAt(adminAddress);
   const c = state.admin;
   const contractAddress = await c.getAddress();
   const listAddress = $("listAddress").value.trim();
