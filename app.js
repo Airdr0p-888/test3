@@ -1278,11 +1278,19 @@ const NETWORK_DEFAULTS = {
 };
 const state = { provider: null, signer: null, account: null, compiled: null, admin: null, mint: null, dividendAdmin: null };
 
+const EVM_MAX_RUNTIME_CODE_SIZE = 24576;
+const EVM_MAX_INIT_CODE_SIZE = 49152;
+
 const $ = (id) => document.getElementById(id);
 const log = (msg) => { $("log").textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + $("log").textContent; };
 const parseToken = (v) => ethers.parseUnits(String(v || "0"), 18);
 const parseBool = (v) => v === true || v === "true";
 const txDone = async (tx, label) => { log(`${label} 已提交：${tx.hash}`); await tx.wait(); log(`${label} 已确认`); };
+const hexByteLength = (hex) => {
+  const raw = String(hex || "").replace(/^0x/, "");
+  if (!raw) return 0;
+  return Math.floor(raw.length / 2);
+};
 
 async function approveIfNeeded(tokenAddress, spender, amount, label) {
   const token = new ethers.Contract(tokenAddress, ERC20_ABI, state.signer);
@@ -1358,7 +1366,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "只保留 Mint / 开盘 / 提币等基础操作。"],
       ["链上风格", "体积最轻，部署和验证最省心。"] 
     ],
-    features: ["mint", "tax", "dividend", "launch"]
+    features: ["mint", "launch"]
   },
   mint: {
     title: "Mint 专用版",
@@ -1369,7 +1377,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "Mint 参数、开盘、加池、提 LP。"],
       ["链上风格", "比综合版更轻，适合做干净首发。"] 
     ],
-    features: ["mint", "tax", "dividend", "launch"]
+    features: ["mint", "launch"]
   },
   tax: {
     title: "标准税收版",
@@ -1380,7 +1388,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "税率、营销钱包、SwapBack、加池。"],
       ["链上风格", "比高级限制版更轻，更适合长期维护。"] 
     ],
-    features: ["mint", "tax", "dividend", "launch"]
+    features: ["mint", "tax", "launch"]
   },
   mintTax: {
     title: "Mint + 税收版",
@@ -1391,7 +1399,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "Mint 参数、税率、营销钱包、SwapBack。"],
       ["链上风格", "兼顾首发和后续运营，功能与体积较平衡。"] 
     ],
-    features: ["mint", "tax", "dividend", "launch"]
+    features: ["mint", "tax", "launch"]
   },
   dividendInternal: {
     title: "内置分红版",
@@ -1435,7 +1443,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "白名单、限购、税率、分红、开盘与暂停。"],
       ["链上风格", "功能最全，体积和风险检测分数也通常最高。"] 
     ],
-    features: ["mint", "tax", "dividend", "limits", "launch"]
+    features: ["mint", "tax", "limits", "launch"]
   },
   trade: {
     title: "纯交易版",
@@ -1446,7 +1454,7 @@ const TEMPLATE_CONFIGS = {
       ["后台重点", "开盘、税率、营销、加池和 LP 提取。"],
       ["链上风格", "适合 meme / 社区币常规上池流程。"] 
     ],
-    features: ["mint", "tax", "dividend", "launch"]
+    features: ["mint", "tax", "launch"]
   }
 };
 
@@ -1633,15 +1641,66 @@ const TEMPLATE_SOURCE_BINDINGS = {
   advanced: "advanced"
 };
 
+const FEATURE_PRESETS = {
+  light: { tax: false, dividend: false, lpDividend: false, limits: false },
+  mint: { tax: false, dividend: false, lpDividend: false, limits: false },
+  tax: { tax: true, dividend: false, lpDividend: false, limits: false },
+  mintTax: { tax: true, dividend: false, lpDividend: false, limits: false },
+  dividendInternal: { tax: true, dividend: true, lpDividend: false, limits: false },
+  dividendExternal: { tax: true, dividend: true, lpDividend: false, limits: false },
+  lpDividend: { tax: true, dividend: true, lpDividend: true, limits: false },
+  advanced: { tax: true, dividend: false, lpDividend: false, limits: true },
+  trade: { tax: true, dividend: false, lpDividend: false, limits: false }
+};
+
+function setFeatureToggle(name, checked) {
+  const field = formField(name);
+  if (field) field.checked = !!checked;
+}
+
+function selectedModuleConfig() {
+  const tax = !!formField("featureTax")?.checked;
+  const dividend = !!formField("featureDividend")?.checked;
+  const lpDividend = !!formField("featureLPDividend")?.checked;
+  const limits = !!formField("featureLimits")?.checked;
+  return { tax, dividend, lpDividend, limits };
+}
+
+function selectedFeatureSet() {
+  const modules = selectedModuleConfig();
+  const set = new Set(["mint", "launch"]);
+  if (modules.tax) set.add("tax");
+  if (modules.dividend) set.add("dividend");
+  if (modules.lpDividend) {
+    set.add("dividend");
+    set.add("lpDividend");
+  }
+  if (modules.limits) set.add("limits");
+  return set;
+}
+
+function selectedSourceKind() {
+  const features = selectedFeatureSet();
+  return features.has("dividend") || features.has("lpDividend") ? "full" : "lite";
+}
+
+function applyTemplatePreset(template = selectedTemplateVersion()) {
+  const preset = FEATURE_PRESETS[template] || FEATURE_PRESETS.mintTax;
+  setFeatureToggle("featureTax", preset.tax);
+  setFeatureToggle("featureDividend", preset.dividend);
+  setFeatureToggle("featureLPDividend", preset.lpDividend);
+  setFeatureToggle("featureLimits", preset.limits);
+}
+
 function templateContractSource(template = selectedTemplateVersion()) {
   const templateKey = String(template || selectedTemplateVersion()).split(":")[0];
-  const key = TEMPLATE_SOURCE_BINDINGS[templateKey] || templateKey || "mintTax";
-  if (["light", "mint", "tax", "mintTax", "trade", "dividendInternal", "dividendExternal", "lpDividend", "advanced"].includes(key)) return CONTRACT_SOURCE;
+  const key = TEMPLATE_SOURCE_BINDINGS[templateKey] || templateKey || selectedSourceKind();
+  if (String(key).startsWith("lite")) return LITE_CONTRACT_SOURCE;
   return CONTRACT_SOURCE;
 }
 
 function templateSourceVariant(template = selectedTemplateVersion(), dividendMode = selectedDividendMode()) {
-  return `${TEMPLATE_SOURCE_BINDINGS[template] || "mintTax"}:${dividendMode}`;
+  return `${selectedSourceKind()}:${dividendMode}`;
 }
 
 function formField(name) {
@@ -1654,6 +1713,21 @@ function selectedTemplateVersion() {
 
 function selectedDividendMode() {
   return formField("dividendMode")?.value === "external" ? "external" : "internal";
+}
+
+function renderFeatureSummary() {
+  const modules = selectedModuleConfig();
+  const parts = [];
+  if (modules.tax) parts.push("税率/税收");
+  if (modules.dividend) parts.push("持币分红");
+  if (modules.lpDividend) parts.push("LP 分红");
+  if (modules.limits) parts.push("限购/白名单");
+  const summary = $("featureSummary");
+  if (!summary) return;
+  const sourceKind = selectedSourceKind() === "full" ? "完整版源码" : "轻量源码";
+  summary.textContent = parts.length
+    ? `当前启用：${parts.join("、")}；编译将使用${sourceKind}。`
+    : `当前仅保留基础 Mint / 开盘能力；编译将使用${sourceKind}。`;
 }
 
 function setSelectOptionEnabled(fieldName, optionValue, enabled) {
@@ -1759,6 +1833,63 @@ function syncDividendModeUI() {
   }
 }
 
+function applyFeatureSelection() {
+  const taxField = formField("featureTax");
+  const dividendField = formField("featureDividend");
+  const lpDividendField = formField("featureLPDividend");
+  const limitsField = formField("featureLimits");
+  if (!taxField || !dividendField || !lpDividendField || !limitsField) return;
+
+  if (lpDividendField.checked) dividendField.checked = true;
+  if (!dividendField.checked) lpDividendField.checked = false;
+
+  const features = selectedFeatureSet();
+  const showDividend = features.has("dividend");
+  const showLPDividend = features.has("lpDividend");
+  const showLimits = features.has("limits");
+
+  if (!features.has("tax")) {
+    if (formField("buyTax")) formField("buyTax").value = "0";
+    if (formField("sellTax")) formField("sellTax").value = "0";
+    if (formField("transferTax")) formField("transferTax").value = "0";
+    setTaxShareValue("marketingShare", 100);
+    setTaxShareValue("burnShare", 0);
+    setTaxShareValue("lpShare", 0);
+    setTaxShareValue("dividendShare", 0);
+  }
+
+  if (!showDividend) {
+    if (formField("dividendMode")) formField("dividendMode").value = "internal";
+    if (formField("dividendTargetMode")) formField("dividendTargetMode").value = "0";
+    setTaxShareValue("dividendShare", 0);
+  } else if (showLPDividend) {
+    if (formField("dividendTargetMode")) formField("dividendTargetMode").value = "1";
+  } else if (formField("dividendTargetMode")?.value === "1") {
+    formField("dividendTargetMode").value = "0";
+  }
+
+  setSelectOptionEnabled("dividendTargetMode", "1", showLPDividend);
+  setFieldDisabled("dividendMode", !showDividend);
+  setFieldDisabled("dividendTargetMode", !showDividend);
+  setFieldDisabled("rewardToken", !showDividend);
+  setFieldDisabled("minTokenDividendBalance", !showDividend);
+
+  if (!showLimits) {
+    if (formField("buyLimitEnabled")) formField("buyLimitEnabled").value = "false";
+    if (formField("buyAmountLimitEnabled")) formField("buyAmountLimitEnabled").value = "false";
+    if (formField("buyWhitelistEnabled")) formField("buyWhitelistEnabled").value = "false";
+    if (formField("preLaunchBuyWhitelistEnabled")) formField("preLaunchBuyWhitelistEnabled").value = "false";
+  }
+
+  renderFeatureSummary();
+  syncTaxShareControls();
+  syncDeployLimitModeUI();
+  syncAdminLimitModeUI();
+  syncDividendModeUI();
+  applyTemplateVisibility(selectedTemplateVersion(), "deploy");
+  applyTemplateVisibility(selectedTemplateVersion(), "admin");
+}
+
 function templateStorageKey(address) {
   return `goldlaunch_template_${String(address || "").toLowerCase()}`;
 }
@@ -1847,8 +1978,7 @@ function setTemplateDrivenDefaults(template) {
 }
 
 function applyTemplateVisibility(template, mode = "deploy") {
-  const config = templateConfig(template);
-  const featureSet = new Set(config.features);
+  const featureSet = selectedFeatureSet();
   const nodes = document.querySelectorAll(mode === "admin" ? ".admin-groups [data-template-feature]" : "#deploy [data-template-feature]");
   nodes.forEach((node) => {
     const required = String(node.dataset.templateFeature || "").split(/\s+/).filter(Boolean);
@@ -1868,16 +1998,13 @@ function applyTemplateVisibility(template, mode = "deploy") {
 
 function applyTemplateSelection(template = selectedTemplateVersion()) {
   renderTemplateDescription(template);
+  applyTemplatePreset(template);
   setTemplateDrivenDefaults(template);
-  applyTemplateVisibility(template, "deploy");
-  applyTemplateVisibility(template, "admin");
-  syncDeployLimitModeUI();
-  syncAdminLimitModeUI();
-  syncDividendModeUI();
+  applyFeatureSelection();
   const hint = $("templateAdminHint");
   if (hint) {
-    const supportsExternalDividend = templateConfig(template).features.some((feature) => feature === "dividend" || feature === "lpDividend");
-    const supportsDividend = templateConfig(template).features.some((feature) => feature === "dividend" || feature === "lpDividend");
+    const supportsExternalDividend = selectedFeatureSet().has("dividend") || selectedFeatureSet().has("lpDividend");
+    const supportsDividend = selectedFeatureSet().has("dividend") || selectedFeatureSet().has("lpDividend");
     const extras = [];
     if (!supportsDividend) extras.push("当前模板不包含分红功能，分红相关配置已禁用。");
     else if (!supportsExternalDividend) extras.push("当前模板不支持独立分红合约，已禁用该选项。");
@@ -2110,7 +2237,19 @@ function parseAddressList(value) {
 }
 
 function readDeployTaxConfig(form) {
+  const modules = selectedModuleConfig();
   syncTaxShareControls();
+  if (!modules.tax) {
+    return {
+      buyTax: 0n,
+      sellTax: 0n,
+      transferTax: 0n,
+      marketingShare: 10000n,
+      burnShare: 0n,
+      lpShare: 0n,
+      dividendShare: 0n
+    };
+  }
   const config = {
     buyTax: percentToBp(form.elements.buyTax.value),
     sellTax: percentToBp(form.elements.sellTax.value),
@@ -2118,7 +2257,7 @@ function readDeployTaxConfig(form) {
     marketingShare: percentToBp(form.elements.marketingShare.value),
     burnShare: percentToBp(form.elements.burnShare.value),
     lpShare: percentToBp(form.elements.lpShare.value),
-    dividendShare: percentToBp(form.elements.dividendShare.value)
+    dividendShare: modules.dividend ? percentToBp(form.elements.dividendShare.value) : 0n
   };
   if (config.marketingShare + config.burnShare + config.lpShare + config.dividendShare !== 10000n) {
     throw new Error("税收分配四项必须合计 100%。");
@@ -2186,6 +2325,16 @@ function syncTaxShareControls(changedName = null, rawValue = null) {
 }
 
 function readDeployLimitConfig(form) {
+  if (!selectedModuleConfig().limits) {
+    return {
+      enabled: false,
+      maxAmount: 0n,
+      amountEnabled: false,
+      maxBaseAmount: 0n,
+      whitelistEnabled: false,
+      preLaunchWhitelistEnabled: false
+    };
+  }
   const config = {
     enabled: parseBool(form.elements.buyLimitEnabled.value),
     maxAmount: parseToken(form.elements.maxBuyAmountPerWallet.value),
@@ -2374,7 +2523,7 @@ async function compileContract() {
       viaIR: true,
       optimizer: { enabled: true, runs: 1 },
       metadata: { bytecodeHash: "none" },
-      outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } }
+      outputSelection: { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } }
     }
   };
   const output = await compileWithWorker(input);
@@ -2383,12 +2532,19 @@ async function compileContract() {
   const contract = output.contracts["FairMintTokenV1.sol"].FairMintTokenV1;
   const distributor = output.contracts["FairMintTokenV1.sol"].FairMintDividendDistributor;
   const factory = output.contracts["Create2Factory.sol"].Create2Factory;
+  const creationBytecode = "0x" + contract.evm.bytecode.object;
+  const runtimeBytecode = "0x" + (contract.evm.deployedBytecode?.object || "");
+  const creationByteSize = hexByteLength(creationBytecode);
+  const runtimeByteSize = hexByteLength(runtimeBytecode);
   state.compiled = {
     sourceVariant,
     dividendMode,
     distributorDeployEnabled: dividendMode === "external",
     abi: contract.abi,
-    bytecode: "0x" + contract.evm.bytecode.object,
+    bytecode: creationBytecode,
+    runtimeBytecode,
+    creationByteSize,
+    runtimeByteSize,
     distributorAbi: distributor?.abi || null,
     distributorBytecode: distributor?.evm?.bytecode?.object ? "0x" + distributor.evm.bytecode.object : null,
     factoryAbi: factory.abi,
@@ -2396,6 +2552,13 @@ async function compileContract() {
     standardJsonInput: input
   };
   log(`编译完成，ABI ${contract.abi.length} 项，构造参数 ${compiledConstructorTypes().length} 项。`);
+  log(`合约大小：创建字节码 ${creationByteSize} bytes / 运行时代码 ${runtimeByteSize} bytes`);
+  if (creationByteSize > EVM_MAX_INIT_CODE_SIZE) {
+    log(`警告：创建字节码超过 EVM 上限 ${EVM_MAX_INIT_CODE_SIZE} bytes，部署大概率会直接失败。`);
+  }
+  if (runtimeByteSize > EVM_MAX_RUNTIME_CODE_SIZE) {
+    log(`警告：运行时代码超过 EVM 上限 ${EVM_MAX_RUNTIME_CODE_SIZE} bytes，链上会拒绝部署。`);
+  }
   return state.compiled;
 }
 
@@ -2404,6 +2567,7 @@ function deployArgs(form) {
   const fd = new FormData(form);
   const tax = readDeployTaxConfig(form);
   const limit = readDeployLimitConfig(form);
+  const modules = selectedModuleConfig();
   const launchRaw = fd.get("launchTime");
   const launchTime = launchRaw ? Math.floor(new Date(launchRaw).getTime() / 1000) : 0;
   return [
@@ -2424,8 +2588,8 @@ function deployArgs(form) {
     BigInt(launchTime),
     fd.get("marketingWallet") || state.account,
     state.account,
-    fd.get("rewardToken") || ZERO,
-    Number(fd.get("dividendTargetMode") || 0),
+    modules.dividend ? (fd.get("rewardToken") || ZERO) : ZERO,
+    modules.lpDividend ? 1 : 0,
     tax.buyTax,
     tax.sellTax,
     tax.transferTax,
@@ -2435,7 +2599,7 @@ function deployArgs(form) {
     tax.dividendShare,
     limit.enabled,
     limit.maxAmount,
-    parseToken(fd.get("minTokenDividendBalance")),
+    modules.dividend ? parseToken(fd.get("minTokenDividendBalance")) : 0n,
     limit.amountEnabled,
     limit.maxBaseAmount,
     limit.whitelistEnabled,
@@ -2444,6 +2608,12 @@ function deployArgs(form) {
 }
 
 function readDividendMode(form) {
+  if (!selectedModuleConfig().dividend) {
+    return {
+      external: false,
+      owner: state.account
+    };
+  }
   const fd = new FormData(form);
   return {
     external: fd.get("dividendMode") === "external",
@@ -2469,6 +2639,12 @@ async function deployContract(form) {
   const constructorTypes = compiledConstructorTypes();
   if (constructorTypes.length !== args.length) {
     throw new Error(`构造参数数量不匹配：合约需要 ${constructorTypes.length} 项，网页生成 ${args.length} 项，请刷新后重新编译。`);
+  }
+  if (state.compiled.creationByteSize > EVM_MAX_INIT_CODE_SIZE) {
+    throw new Error(`当前模板编译后的创建字节码为 ${state.compiled.creationByteSize} bytes，超过 EVM 上限 ${EVM_MAX_INIT_CODE_SIZE} bytes，所以会在钱包确认后部署失败。请减少功能，或改成更轻的源码模板。`);
+  }
+  if (state.compiled.runtimeByteSize > EVM_MAX_RUNTIME_CODE_SIZE) {
+    throw new Error(`当前模板编译后的运行时代码为 ${state.compiled.runtimeByteSize} bytes，超过 EVM 上限 ${EVM_MAX_RUNTIME_CODE_SIZE} bytes，链上不允许部署。请减少功能，或改成更轻的源码模板。`);
   }
   const vanity = readVanityConfig(form);
   let contract;
@@ -2912,15 +3088,19 @@ $("loadAdmin").addEventListener("click", async (e) => run(e.currentTarget, async
 $("refreshAdmin").addEventListener("click", async (e) => run(e.currentTarget, refreshAdmin));
 document.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", async () => run(btn, () => adminAction(btn.dataset.action))));
 formField("templateVersion")?.addEventListener("change", (e) => applyTemplateSelection(e.target.value));
+["featureTax", "featureDividend", "featureLPDividend", "featureLimits"].forEach((name) => {
+  formField(name)?.addEventListener("change", applyFeatureSelection);
+});
 formField("dividendMode")?.addEventListener("change", () => {
   syncDividendModeUI();
-  applyTemplateSelection(selectedTemplateVersion());
+  applyFeatureSelection();
 });
 formField("buyLimitEnabled")?.addEventListener("change", () => syncDeployLimitModeUI("token"));
 formField("buyAmountLimitEnabled")?.addEventListener("change", () => syncDeployLimitModeUI("amount"));
 $("buyLimitEnabled")?.addEventListener("change", () => syncAdminLimitModeUI("token"));
 $("buyAmountLimitEnabled")?.addEventListener("change", () => syncAdminLimitModeUI("amount"));
 applyTemplateSelection(selectedTemplateVersion());
+renderFeatureSummary();
 syncDividendModeUI();
 syncDeployLimitModeUI();
 syncAdminLimitModeUI();
