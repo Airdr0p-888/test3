@@ -2624,7 +2624,7 @@ function assembleLiteContractSource(modules = selectedModuleConfig()) {
 }
 
 function assembleTokenContractSource({ modules = selectedModuleConfig(), dividendMode = selectedDividendMode() } = {}) {
-  const useExternalDividendSource = (modules.dividend || modules.lpDividend) && dividendMode === "external";
+  const useExternalDividendSource = modules.dividend || modules.lpDividend;
   const needsFullSource = (modules.dividend || modules.lpDividend) && !useExternalDividendSource;
   const source = useExternalDividendSource
     ? assembleExternalDividendSource(modules)
@@ -2674,7 +2674,7 @@ function selectedTemplateVersion() {
 }
 
 function selectedDividendMode() {
-  return formField("dividendMode")?.value === "external" ? "external" : "internal";
+  return selectedModuleConfig().dividend || selectedModuleConfig().lpDividend ? "external" : "internal";
 }
 
 function renderFeatureSummary() {
@@ -2790,7 +2790,8 @@ function syncDividendModeUI() {
   const dividendMode = formField("dividendMode");
   const dividendOwner = formField("dividendOwner");
   if (!dividendMode) return;
-  const external = dividendMode.value === "external";
+  dividendMode.value = "external";
+  const external = true;
   if (dividendOwner) {
     dividendOwner.disabled = !external;
     if (!external) dividendOwner.value = "";
@@ -2841,18 +2842,22 @@ function applyFeatureSelection() {
   }
 
   if (!showDividend) {
-    if (formField("dividendMode")) formField("dividendMode").value = "internal";
+    if (formField("dividendMode")) formField("dividendMode").value = "external";
     if (formField("dividendTargetMode")) formField("dividendTargetMode").value = "0";
+    if (formField("dividendOwner")) formField("dividendOwner").value = "";
     setTaxShareValue("dividendShare", 0);
   } else if (showLPDividend) {
+    if (formField("dividendMode")) formField("dividendMode").value = "external";
     if (formField("dividendTargetMode")) formField("dividendTargetMode").value = "1";
   } else if (formField("dividendTargetMode")?.value === "1") {
+    if (formField("dividendMode")) formField("dividendMode").value = "external";
     formField("dividendTargetMode").value = "0";
   }
 
   setSelectOptionEnabled("dividendTargetMode", "1", showLPDividend);
-  setFieldDisabled("dividendMode", !showDividend);
+  setFieldDisabled("dividendMode", true);
   setFieldDisabled("dividendTargetMode", !showDividend);
+  setFieldDisabled("dividendOwner", !showDividend);
   setFieldDisabled("rewardToken", !showDividend);
   setFieldDisabled("minTokenDividendBalance", !showDividend);
 
@@ -2926,18 +2931,15 @@ function setTemplateDrivenDefaults(template) {
   const dividendMode = formField("dividendMode");
   const dividendTargetMode = formField("dividendTargetMode");
   const supportsDividend = config.features.includes("dividend") || config.features.includes("lpDividend");
-  const supportsExternalDividend = supportsDividend;
   if (dividendMode) {
-    setSelectOptionEnabled("dividendMode", "external", supportsExternalDividend);
-    if (!supportsDividend) dividendMode.value = "internal";
-    else if (template === "dividendExternal") dividendMode.value = "external";
-    else if (!supportsExternalDividend && dividendMode.value === "external") dividendMode.value = "internal";
+    setSelectOptionEnabled("dividendMode", "external", true);
+    dividendMode.value = "external";
   }
   if (dividendTargetMode) {
     if (!supportsDividend) dividendTargetMode.value = "0";
     else if (template === "lpDividend") dividendTargetMode.value = "1";
   }
-  setFieldDisabled("dividendMode", !supportsDividend);
+  setFieldDisabled("dividendMode", true);
   setFieldDisabled("dividendTargetMode", !supportsDividend);
   const buyTax = formField("buyTax");
   const sellTax = formField("sellTax");
@@ -2999,8 +3001,8 @@ function applyTemplateSelection(template = selectedTemplateVersion()) {
   applyFeatureSelection();
   const hint = $("templateAdminHint");
   if (hint) {
-    const supportsExternalDividend = selectedFeatureSet().has("dividend") || selectedFeatureSet().has("lpDividend");
     const supportsDividend = selectedFeatureSet().has("dividend") || selectedFeatureSet().has("lpDividend");
+    const supportsExternalDividend = true;
     const extras = [];
     if (!supportsDividend) extras.push("当前模板不包含分红功能，分红相关配置已禁用。");
     else if (!supportsExternalDividend) extras.push("当前模板不支持独立分红合约，已禁用该选项。");
@@ -3538,7 +3540,7 @@ async function compileContract() {
     dividendMode,
     sourceKind: assembled.sourceKind,
     moduleKey: assembled.moduleKey,
-    distributorDeployEnabled: dividendMode === "external",
+    distributorDeployEnabled: assembled.sourceKind.startsWith("external-"),
     abi: contract.abi,
     bytecode: creationBytecode,
     runtimeBytecode,
@@ -3617,7 +3619,7 @@ function readDividendMode(form) {
   }
   const fd = new FormData(form);
   return {
-    external: fd.get("dividendMode") === "external",
+    external: true,
     owner: (fd.get("dividendOwner") || state.account || "").trim() || state.account
   };
 }
