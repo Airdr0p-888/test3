@@ -1454,13 +1454,23 @@ async function assertTokenBalance(tokenAddress, owner, amount, label) {
   if (balance < amount) throw new Error(`${label} 余额不足。需要 ${ethers.formatUnits(amount, 18)}，当前 ${ethers.formatUnits(balance, 18)}。`);
 }
 
-async function rewardInfo(contract) {
+async function rewardInfo(contract, fallbackContract = contract) {
+  const resolveMintMode = async () => {
+    if (typeof contract.mintMode === "function") return Number(await contract.mintMode());
+    if (fallbackContract && typeof fallbackContract.mintMode === "function") return Number(await fallbackContract.mintMode());
+    return 0;
+  };
+  const resolveUsdtAddress = async () => {
+    if (typeof contract.usdtAddress === "function") return await contract.usdtAddress();
+    if (fallbackContract && typeof fallbackContract.usdtAddress === "function") return await fallbackContract.usdtAddress();
+    return ZERO;
+  };
   const rewardAddress = await contract.rewardTokenAddress().catch(async () => {
-    const mode = Number(await contract.mintMode());
-    return mode === 0 ? ZERO : await contract.usdtAddress();
+    const mode = await resolveMintMode();
+    return mode === 0 ? ZERO : await resolveUsdtAddress();
   });
   if (rewardAddress === ZERO) {
-    const mode = Number(await contract.mintMode());
+    const mode = await resolveMintMode();
     const defaults = activeNetworkDefaults();
     return { address: ZERO, symbol: mode === 0 ? (defaults?.native || "BNB") : "USDT", decimals: 18, native: true };
   }
@@ -4121,7 +4131,7 @@ async function adminAction(action) {
   const usdt = mode === 1 ? await c.usdtAddress() : ZERO;
   const dividendTarget = await dividendAdminContract(c);
   const dividendTargetAddress = await dividendTarget.getAddress();
-  const reward = await rewardInfo(dividendTarget);
+  const reward = await rewardInfo(dividendTarget, c);
   const renounceOwnership = async () => {
     if ($("renounceConfirmation").value.trim() !== "RENOUNCE") {
       throw new Error("请输入 RENOUNCE 确认永久丢弃管理员权限");
